@@ -251,6 +251,12 @@ async def mix_workflow(
         "status": "queued",
         "input": [vocals.filename, accompaniment.filename],
         "metadata": {"vocals": vocals_metadata, "accompaniment": accompaniment_metadata},
+        "retry": {
+            "vocals_path": str(vocals_path),
+            "accompaniment_path": str(accompaniment_path),
+            "vocal_gain_db": vocal_gain_db,
+            "accompaniment_gain_db": accompaniment_gain_db,
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
@@ -589,15 +595,6 @@ async def train_rvc_workflow(
     if not 1 <= total_epoch <= 10000 or not 1 <= batch_size <= 1024:
         raise HTTPException(400, "training epoch or batch size is outside the supported range")
     jid = uuid.uuid4().hex
-    jobs[jid] = {
-        "id": jid,
-        "type": "rvc_training",
-        "status": "queued",
-        "input": dataset_id,
-        "metadata": {"model_name": model_name, "dataset": dataset["name"], "total_epoch": total_epoch},
-        "log": [],
-    }
-    store.save_job(jobs[jid])
     request = TrainingRequest(
         model_name=model_name,
         dataset_path=dataset["path"],
@@ -608,6 +605,16 @@ async def train_rvc_workflow(
             "gpu": gpu,
         },
     )
+    jobs[jid] = {
+        "id": jid,
+        "type": "rvc_training",
+        "status": "queued",
+        "input": dataset_id,
+        "metadata": {"model_name": model_name, "dataset": dataset["name"], "total_epoch": total_epoch},
+        "retry": {"model_name": model_name, "parameters": request.parameters},
+        "log": [],
+    }
+    store.save_job(jobs[jid])
     bg.add_task(run_training_job, jid, Path(applio_root), applio_python, request, dataset)
     return jobs[jid]
 
@@ -870,6 +877,61 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "rvc_training":
+        applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+        applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+        if not applio_root or not applio_python:
+            raise HTTPException(503, "Applio engine environment is not configured")
+        dataset = store.get_dataset(job.get("input", ""))
+        if not dataset or not Path(dataset["path"]).is_dir():
+            raise HTTPException(404, "registered training dataset is missing")
+        retry = job.get("retry") or {}
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "rvc_training",
+            "status": "queued",
+            "input": job["input"],
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        request = TrainingRequest(
+            model_name=retry.get("model_name", job["metadata"].get("model_name", "")),
+            dataset_path=dataset["path"],
+            parameters=retry.get("parameters", {}),
+        )
+        bg.add_task(run_training_job, new_id, Path(applio_root), applio_python, request, dataset)
+        return jobs[new_id]
+    if job.get("type") == "audio_mix":
+        retry = job.get("retry") or {}
+        vocals_path = Path(retry.get("vocals_path", ""))
+        accompaniment_path = Path(retry.get("accompaniment_path", ""))
+        if not vocals_path.is_file() or not accompaniment_path.is_file():
+            raise HTTPException(404, "original vocal or accompaniment audio is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "audio_mix",
+            "status": "queued",
+            "input": job["input"],
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        bg.add_task(
+            run_mix_job,
+            new_id,
+            vocals_path,
+            accompaniment_path,
+            retry.get("vocal_gain_db", 0),
+            retry.get("accompaniment_gain_db", 0),
+        )
+        return jobs[new_id]
     if job.get("type") == "cover_workflow":
         demucs_executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
         applio_root = os.environ.get("APPLIO_ROOT", "").strip()

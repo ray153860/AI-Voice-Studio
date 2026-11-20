@@ -363,6 +363,13 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert job["result"]["duration"] == 1.0
     assert client.get(job["output"]).status_code == 200
 
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["duration"] == 1.0
+
 
 def test_midi_inspection_api(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
@@ -495,7 +502,7 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
             assert request.model_name == "DemoVoice"
             assert Path(request.dataset_path).is_dir()
             output = self.applio_root / "logs" / "DemoVoice"
-            output.mkdir(parents=True)
+            output.mkdir(parents=True, exist_ok=True)
             model = output / "DemoVoice.pth"
             index = output / "DemoVoice.index"
             model.write_bytes(b"model")
@@ -514,6 +521,13 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     assert job["result"]["engine"] == "simulated-applio-training"
     trained = [model for model in client.get("/api/models").json() if model["status"] == "trained_unverified"]
     assert {Path(model["name"]).suffix for model in trained} == {".pth", ".index"}
+
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["engine"] == "simulated-applio-training"
 
 
 def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
