@@ -768,6 +768,29 @@ def test_dataset_import_rejects_audio_over_limit_and_cleans_directory(tmp_path, 
     assert not list(datasets.iterdir())
 
 
+def test_dataset_import_rejects_aggregate_over_limit_and_cleans_files(tmp_path, monkeypatch):
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    tiny_wav = io.BytesIO()
+    sf.write(tiny_wav, np.zeros(1, dtype="float32"), 8000, format="WAV")
+    payload = tiny_wav.getvalue()
+    monkeypatch.setattr(app_module, "DATASETS", datasets)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", len(payload) + 1)
+    monkeypatch.setattr(app_module, "MAX_DATASET_UPLOAD_BYTES", len(payload) + 1, raising=False)
+
+    response = ApiClient(app_module.app).post(
+        "/api/datasets",
+        data={"name": "Authorized clips", "license_name": "owned-recordings"},
+        files=[
+            ("files", ("clip-a.wav", payload, "audio/wav")),
+            ("files", ("clip-b.wav", payload, "audio/wav")),
+        ],
+    )
+
+    assert response.status_code == 413
+    assert not list(datasets.iterdir())
+
+
 def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     from voice_studio.store import Store
 

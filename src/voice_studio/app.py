@@ -27,6 +27,7 @@ from .workflows import run_cover_workflow
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
 INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
 MAX_AUDIO_UPLOAD_BYTES = 512 * 1024 * 1024
+MAX_DATASET_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 MAX_DOCUMENT_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_MODEL_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -175,12 +176,16 @@ async def import_dataset(files: list[UploadFile], name: str = Form(), license_na
     target_dir.mkdir(parents=True, exist_ok=False)
     saved = []
     metadata = []
+    total_size = 0
     try:
         for index, upload in enumerate(files):
             safe = Path(upload.filename or f"audio-{index}.wav").name
             target = target_dir / f"{index:04d}_{safe}"
-            await save_upload_limited(upload, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
+            size = await save_upload_limited(upload, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
             saved.append(target)
+            total_size += size
+            if total_size > MAX_DATASET_UPLOAD_BYTES:
+                raise HTTPException(413, f"dataset upload exceeds the {MAX_DATASET_UPLOAD_BYTES} byte limit")
             metadata.append(inspect_audio(target))
     except HTTPException:
         for target in saved:
