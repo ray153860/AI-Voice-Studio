@@ -277,6 +277,10 @@ async def run_mix_job(jid, vocals_path, accompaniment_path, vocal_gain_db, accom
     job["log"].append("mixing vocal and accompaniment WAV files")
     store.save_job(job)
     try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
         output = OUT / f"mix-{jid}.wav"
         result = await asyncio.to_thread(
             mix_audio,
@@ -286,6 +290,11 @@ async def run_mix_job(jid, vocals_path, accompaniment_path, vocal_gain_db, accom
             vocal_gain_db,
             accompaniment_gain_db,
         )
+        if cancel_flags.get(jid):
+            output.unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
         job.update(status="completed", output=f"/api/outputs/{output.name}", result=result)
         job["log"].append("aligned, mixed and exported WAV")
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:

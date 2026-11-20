@@ -371,6 +371,31 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert retried_job["result"]["duration"] == 1.0
 
 
+def test_mix_runner_honors_cancellation_before_processing(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    store = Store(tmp_path / "studio.sqlite3")
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+    app_module.cancel_flags.clear()
+    vocals = tmp_path / "vocals.wav"
+    accompaniment = tmp_path / "accompaniment.wav"
+    sf.write(vocals, np.ones(800, dtype="float32") * 0.2, 8000)
+    sf.write(accompaniment, np.ones(800, dtype="float32") * 0.2, 8000)
+    job = {"id": "mix-cancelled", "type": "audio_mix", "status": "queued", "input": [], "metadata": {}, "log": []}
+    app_module.jobs[job["id"]] = job
+    store.save_job(job)
+    app_module.cancel_flags[job["id"]] = True
+
+    asyncio.run(app_module.run_mix_job(job["id"], vocals, accompaniment, 0, 0))
+
+    assert store.get_job(job["id"])["status"] == "cancelled"
+    assert not (outputs / f"mix-{job['id']}.wav").exists()
+
+
 def test_midi_inspection_api(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     events = b"\x00\x90\x3c\x64\x83\x60\x80\x3c\x00\x00\xff\x2f\x00"
