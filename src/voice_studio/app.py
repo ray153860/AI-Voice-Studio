@@ -441,6 +441,11 @@ async def run_cover_job(
     job["status"] = "running"
     job["log"].append("running separation, RVC conversion, quality comparison and mix")
     store.save_job(job)
+
+    def report_progress(stage, value):
+        job.update(progress_stage=stage, progress=value)
+        store.save_job(job)
+
     try:
         if cancel_flags.get(jid):
             job.update(status="cancelled")
@@ -458,6 +463,7 @@ async def run_cover_job(
             chunk_seconds=chunk_seconds,
             overlap_seconds=overlap_seconds,
             workspace=OUT / f"cover-chunks-{jid}",
+            progress_callback=report_progress,
         )
         if cancel_flags.get(jid):
             output.unlink(missing_ok=True)

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -79,6 +80,7 @@ async def run_cover_workflow(
     chunk_seconds: float = 0,
     overlap_seconds: float = 1,
     workspace: Path | None = None,
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict:
     separation = await separator.run(
         EngineRequest(input_audio=str(input_audio), parameters=separation_parameters or {})
@@ -89,6 +91,8 @@ async def run_cover_workflow(
     accompaniment = Path(separation.artifacts["accompaniment"])
     if not vocals.is_file() or not accompaniment.is_file():
         raise RuntimeError("Separation vocals or accompaniment artifact is missing")
+    if progress_callback:
+        progress_callback("separation", 25)
     chunking = None
     if chunk_seconds > 0:
         if workspace is None:
@@ -112,7 +116,11 @@ async def run_cover_workflow(
         conversion_engine = conversion.engine
     if not converted.is_file():
         raise RuntimeError("Voice conversion output is missing")
+    if progress_callback:
+        progress_callback("voice_conversion", 55)
     quality = await asyncio.to_thread(compare_audio, vocals, converted)
+    if progress_callback:
+        progress_callback("quality_comparison", 75)
     output_audio.parent.mkdir(parents=True, exist_ok=True)
     mix = await asyncio.to_thread(
         mix_audio,
@@ -122,6 +130,8 @@ async def run_cover_workflow(
         vocal_gain_db,
         accompaniment_gain_db,
     )
+    if progress_callback:
+        progress_callback("mix", 100)
     return {
         "stages": ["separation", "voice_conversion", "quality_comparison", "mix"],
         "engines": {"separation": separation.engine, "voice_conversion": conversion_engine},

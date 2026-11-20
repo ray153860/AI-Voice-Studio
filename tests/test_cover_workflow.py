@@ -20,6 +20,7 @@ async def test_cover_workflow_sequences_separation_conversion_quality_and_mix(tm
     sf.write(accompaniment, np.sin(2 * np.pi * 110 * time) * 0.1, sample_rate)
     sf.write(converted, np.sin(2 * np.pi * 220 * time) * 0.25, sample_rate)
     calls = []
+    progress = []
 
     class Separator:
         async def run(self, request):
@@ -42,6 +43,7 @@ async def test_cover_workflow_sequences_separation_conversion_quality_and_mix(tm
         input_audio=song,
         output_audio=output,
         conversion_parameters={"model_path": "voice.pth", "pitch": 2},
+        progress_callback=lambda stage, value: progress.append((stage, value)),
     )
 
     assert calls == [("separate", str(song)), ("convert", str(vocals), "voice.pth")]
@@ -50,6 +52,12 @@ async def test_cover_workflow_sequences_separation_conversion_quality_and_mix(tm
     assert result["mix"]["duration"] == 1.0
     assert result["quality"]["before"]["pitch"]["pitch_median_hz"] is not None
     assert result["engines"] == {"separation": "simulated-separator", "voice_conversion": "simulated-rvc"}
+    assert progress == [
+        ("separation", 25),
+        ("voice_conversion", 55),
+        ("quality_comparison", 75),
+        ("mix", 100),
+    ]
 
 
 @pytest.mark.anyio

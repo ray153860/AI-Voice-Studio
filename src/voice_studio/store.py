@@ -3,6 +3,19 @@ import sqlite3
 from pathlib import Path
 
 
+def normalize_job_progress(job):
+    status = job.get("status")
+    if status == "queued":
+        job.setdefault("progress", 0)
+    elif status == "running":
+        job["progress"] = max(job.get("progress", 0), 10)
+    elif status == "completed":
+        job["progress"] = 100
+    else:
+        job.setdefault("progress", 0)
+    return job
+
+
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -15,13 +28,15 @@ class Store:
     def connect(self):
         db=sqlite3.connect(self.path); db.row_factory=sqlite3.Row; return db
     def save_job(self, job):
+        normalize_job_progress(job)
         with self.connect() as db: db.execute("INSERT OR REPLACE INTO jobs(id,data) VALUES (?,?)",(job["id"],json.dumps(job)))
     def get_job(self, jid):
         with self.connect() as db:
             row=db.execute("SELECT data FROM jobs WHERE id=?",(jid,)).fetchone()
-        return json.loads(row[0]) if row else None
+        return normalize_job_progress(json.loads(row[0])) if row else None
     def list_jobs(self):
-        with self.connect() as db: return [json.loads(r[0]) for r in db.execute("SELECT data FROM jobs ORDER BY rowid DESC LIMIT 100")]
+        with self.connect() as db:
+            return [normalize_job_progress(json.loads(r[0])) for r in db.execute("SELECT data FROM jobs ORDER BY rowid DESC LIMIT 100")]
 
     def recover_incomplete_jobs(self):
         recovered = []

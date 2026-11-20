@@ -83,6 +83,7 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
     jid = response.json()["id"]
     job = client.get(f"/api/jobs/{jid}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert client.get(job["output"]).status_code == 200
     assert client.get("/api/jobs").json()[0]["id"] == jid
 
@@ -310,6 +311,7 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert response.status_code == 200
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert job["result"]["engine"] == "simulated-gpt-sovits"
     assert client.get(job["output"]).status_code == 200
 
@@ -406,6 +408,7 @@ def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch)
     assert response.status_code == 200
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert job["result"]["engine"] == "simulated-applio"
 
     retried = client.post(f"/api/jobs/{job['id']}/retry")
@@ -459,6 +462,7 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert response.status_code == 200
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert set(job["artifacts"]) == {"vocals", "accompaniment"}
     assert all(client.get(url).status_code == 200 for url in job["artifacts"].values())
 
@@ -512,6 +516,7 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert response.status_code == 200
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert job["result"]["duration"] == 1.0
     assert client.get(job["output"]).status_code == 200
 
@@ -709,6 +714,7 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert response.status_code == 200
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert job["result"]["engine"] == "simulated-diffsinger"
     assert client.get(job["output"]).status_code == 200
     assert client.get("/api/capabilities").json()["singing_synthesis"] == "configured_unverified"
@@ -776,6 +782,7 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     assert started.status_code == 200
     job = client.get(f"/api/jobs/{started.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
     assert job["result"]["engine"] == "simulated-applio-training"
     trained = [model for model in client.get("/api/models").json() if model["status"] == "trained_unverified"]
     assert {Path(model["name"]).suffix for model in trained} == {".pth", ".index"}
@@ -892,6 +899,8 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert started.status_code == 200
     job = client.get(f"/api/jobs/{started.json()['id']}").json()
     assert job["status"] == "completed"
+    assert job["progress"] == 100
+    assert job["progress_stage"] == "mix"
     assert job["result"]["stages"] == ["separation", "voice_conversion", "quality_comparison", "mix"]
     assert job["result"]["engines"] == {"separation": "simulated-demucs", "voice_conversion": "simulated-applio"}
     assert job["result"]["chunking"]["chunk_count"] == 3
