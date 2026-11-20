@@ -23,4 +23,4 @@ Windows 源码运行、隔离构建和验证边界见 [`docs/WINDOWS.md`](docs/W
 
 ## 许可
 
-项目代码采用 MIT。模型权重、数据集与用户音频不随仓库分发；使用者须核实各自来源授权。
+项目代码采用 MIT。模型权重、数据集与用户音频不随仓库分发；使用者须核实各自来源授权。直接依赖和模型授权边界见 [`docs/DEPENDENCY_LICENSES.md`](docs/DEPENDENCY_LICENSES.md)，每次 CI/Windows 构建还会保存实际解析版本的 JSON 报告。

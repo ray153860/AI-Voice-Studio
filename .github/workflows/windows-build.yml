@@ -25,6 +25,7 @@ jobs:
           --collect-all uvicorn
           --collect-all fastapi
           src/voice_studio/launcher.py
+      - run: python -m voice_studio.compliance --output dist/AI-Voice-Studio/dependency-licenses.json
       - name: Smoke test packaged API
         shell: pwsh
         run: |
