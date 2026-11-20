@@ -505,6 +505,16 @@ async def singing_workflow(
         "status": "queued",
         "input": safe,
         "metadata": {"format": "DiffSinger DS", "experiment": experiment.strip()},
+        "retry": {
+            "parameters": {
+                "ds_path": str(source),
+                "experiment": experiment.strip(),
+                "speaker": speaker.strip(),
+                "language": language.strip(),
+                "key": key,
+                "steps": steps,
+            }
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
@@ -852,6 +862,30 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "singing_synthesis":
+        diffsinger_root = os.environ.get("DIFFSINGER_ROOT", "").strip()
+        diffsinger_python = os.environ.get("DIFFSINGER_PYTHON", "").strip()
+        if not diffsinger_root or not diffsinger_python:
+            raise HTTPException(503, "DiffSinger engine environment is not configured")
+        retry = job.get("retry") or {}
+        parameters = retry.get("parameters") or {}
+        if not Path(parameters.get("ds_path", "")).is_file():
+            raise HTTPException(404, "original DiffSinger DS file is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "singing_synthesis",
+            "status": "queued",
+            "input": job["input"],
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        request = EngineRequest(parameters=parameters)
+        bg.add_task(run_singing_job, new_id, Path(diffsinger_root), diffsinger_python, request)
+        return jobs[new_id]
     if job.get("type") == "vocal_separation":
         executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
         if not executable:
