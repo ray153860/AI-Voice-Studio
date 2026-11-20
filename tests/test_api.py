@@ -36,6 +36,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert response.status_code == 200
     assert 'id="singingDs"' in response.text
     assert 'id="singingExperiment"' in response.text
+    assert 'id="singingLyrics"' in response.text
+    assert "对齐歌词与 MIDI" in response.text
     assert "提交 DiffSinger 任务" in response.text
     assert 'id="datasetFiles"' in response.text
     assert 'id="trainingDataset"' in response.text
@@ -354,6 +356,30 @@ def test_midi_inspection_api(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "parsed_no_synthesis"
     assert response.json()["notes"][0]["pitch"] == 60
+
+
+def test_midi_lyrics_alignment_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    events = b"\x00\x90\x3c\x64\x83\x60\x80\x3c\x00\x00\xff\x2f\x00"
+    midi = (
+        b"MThd"
+        + struct.pack(">IHHH", 6, 0, 1, 480)
+        + b"MTrk"
+        + struct.pack(">I", len(events))
+        + events
+    )
+    client = ApiClient(app_module.app)
+
+    response = client.post(
+        "/api/singing/align",
+        data={"lyrics": "你"},
+        files={"midi_file": ("melody.mid", midi, "audio/midi")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "aligned_no_phonemization_no_synthesis"
+    assert response.json()["score"][0]["lyric"] == "你"
+    assert response.json()["score"][0]["pitch"] == 60
 
 
 def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):

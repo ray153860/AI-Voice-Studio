@@ -1,6 +1,36 @@
+import re
 import struct
 from collections import defaultdict
 from pathlib import Path
+
+LYRIC_TOKEN = re.compile(r"[\u3400-\u9fff]|[A-Za-z0-9]+(?:'[A-Za-z]+)?|-")
+
+
+def tokenize_lyrics(text: str) -> list[str]:
+    return LYRIC_TOKEN.findall(text)
+
+
+def align_lyrics_to_notes(notes: list[dict], lyrics: str) -> list[dict]:
+    ordered = sorted(notes, key=lambda note: (note["start_tick"], note["pitch"]))
+    occupied_until = -1
+    for note in ordered:
+        if note["start_tick"] < occupied_until:
+            raise ValueError("Singing lyric alignment currently requires a monophonic MIDI melody")
+        occupied_until = note["start_tick"] + note["duration_ticks"]
+    tokens = tokenize_lyrics(lyrics)
+    if len(tokens) != len(ordered):
+        raise ValueError(f"lyric syllable count ({len(tokens)}) must equal note count ({len(ordered)})")
+    aligned = []
+    previous_lyric = None
+    for note, token in zip(ordered, tokens, strict=True):
+        slur = token == "-"
+        if slur and previous_lyric is None:
+            raise ValueError("a slur marker cannot be the first lyric syllable")
+        lyric = "" if slur else token
+        if lyric:
+            previous_lyric = lyric
+        aligned.append({**note, "lyric": lyric, "slur": slur})
+    return aligned
 
 
 def _variable_length(data: bytes, offset: int) -> tuple[int, int]:

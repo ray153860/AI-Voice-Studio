@@ -17,7 +17,7 @@ from .adapters.diffsinger import DiffSingerAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest, TrainingRequest
-from .midi import parse_midi
+from .midi import align_lyrics_to_notes, parse_midi
 from .models import sha256_file, validate_model_filename
 from .quality import analyze_audio, compare_audio
 from .store import Store
@@ -58,6 +58,29 @@ async def inspect_midi(file: UploadFile):
         target.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     return {"file": safe, "status": "parsed_no_synthesis", **result}
+
+
+@app.post("/api/singing/align")
+async def align_singing_score(midi_file: UploadFile, lyrics: str = Form()):
+    safe = Path(midi_file.filename or "melody.mid").name
+    if Path(safe).suffix.lower() not in (".mid", ".midi"):
+        raise HTTPException(400, "MIDI file must use .mid or .midi")
+    target = INBOX / f"singing-{uuid.uuid4().hex}_{safe}"
+    target.write_bytes(await midi_file.read())
+    try:
+        parsed = parse_midi(target)
+        score = align_lyrics_to_notes(parsed["notes"], lyrics)
+    except (ValueError, OSError) as error:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    return {
+        "file": safe,
+        "status": "aligned_no_phonemization_no_synthesis",
+        "ticks_per_beat": parsed["ticks_per_beat"],
+        "tempos": parsed["tempos"],
+        "rests": parsed["rests"],
+        "score": score,
+    }
 @app.post("/api/audio/analyze")
 async def audio_quality(file: UploadFile):
     safe = Path(file.filename or "audio.wav").name
