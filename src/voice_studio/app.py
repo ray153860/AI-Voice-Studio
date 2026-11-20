@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -10,11 +11,12 @@ from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .adapters.applio import ApplioAdapter
+from .adapters.applio_training import ApplioTrainingAdapter
 from .adapters.demucs import DemucsAdapter
 from .adapters.diffsinger import DiffSingerAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
-from .engines import EngineRequest
+from .engines import EngineRequest, TrainingRequest
 from .midi import parse_midi
 from .models import sha256_file, validate_model_filename
 from .quality import analyze_audio, compare_audio
@@ -22,8 +24,8 @@ from .store import Store
 from .ui import PAGE
 
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
-INBOX, OUT, MODELS = ROOT / "audio", ROOT / "outputs", ROOT / "models"
-for p in (INBOX, OUT, MODELS): p.mkdir(parents=True, exist_ok=True)
+INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
+for p in (INBOX, OUT, MODELS, DATASETS): p.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="AI Voice Studio", version="0.1.0")
 jobs = {}
 cancel_flags = {}
@@ -82,6 +84,7 @@ async def compare_audio_quality(before: UploadFile, after: UploadFile):
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
     rvc_status = "configured_unverified" if os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON") else "interface_only_dependencies_missing"
+    training_status = rvc_status
     separation_status = "configured_unverified" if os.environ.get("DEMUCS_EXECUTABLE") else "interface_only_dependencies_missing"
     singing_status = "configured_unverified" if os.environ.get("DIFFSINGER_ROOT") and os.environ.get("DIFFSINGER_PYTHON") else "interface_only_dependencies_missing"
     return {
@@ -90,7 +93,7 @@ async def capabilities():
         "voice_conversion": rvc_status,
         "vocal_separation": separation_status,
         "singing_synthesis": singing_status,
-        "model_training": "adapter_contract_only_no_task_endpoint",
+        "model_training": training_status,
     }
 @app.get("/api/engines")
 async def engines():
@@ -102,6 +105,51 @@ async def engines():
     ]
 @app.get("/api/models")
 async def list_models(): return store.list_models()
+
+
+@app.get("/api/datasets")
+async def list_datasets():
+    return store.list_datasets()
+
+
+@app.post("/api/datasets")
+async def import_dataset(files: list[UploadFile], name: str = Form(), license_name: str = Form()):
+    if not name.strip() or len(name.strip()) > 100:
+        raise HTTPException(400, "dataset name must be 1-100 characters")
+    if not license_name.strip():
+        raise HTTPException(400, "dataset license or authorization is required")
+    if not 1 <= len(files) <= 1000:
+        raise HTTPException(400, "dataset must contain 1-1000 audio files")
+    dataset_id = uuid.uuid4().hex
+    target_dir = DATASETS / dataset_id
+    target_dir.mkdir(parents=True, exist_ok=False)
+    saved = []
+    metadata = []
+    try:
+        for index, upload in enumerate(files):
+            safe = Path(upload.filename or f"audio-{index}.wav").name
+            target = target_dir / f"{index:04d}_{safe}"
+            target.write_bytes(await upload.read())
+            saved.append(target)
+            metadata.append(inspect_audio(target))
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        for target in saved:
+            target.unlink(missing_ok=True)
+        target_dir.rmdir()
+        raise HTTPException(400, f"invalid training audio: {error}") from error
+    dataset = {
+        "id": dataset_id,
+        "name": name.strip(),
+        "license": license_name.strip(),
+        "files": len(saved),
+        "duration": sum(item["duration"] for item in metadata),
+        "path": str(target_dir),
+        "status": "registered_audio_validated_training_unverified",
+    }
+    store.save_dataset(dataset)
+    return dataset
+
+
 @app.post("/api/models")
 async def import_model(
     file: UploadFile,
@@ -353,6 +401,99 @@ async def run_singing_job(jid, diffsinger_root, diffsinger_python, request):
             result={"sample_rate": result.sample_rate, "engine": result.engine, **result.metadata},
         )
         job["log"].append("received and validated DiffSinger WAV output")
+    except (RuntimeError, ValueError, OSError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
+
+
+@app.post("/api/workflow/train-rvc")
+async def train_rvc_workflow(
+    bg: BackgroundTasks,
+    dataset_id: str = Form(),
+    model_name: str = Form(),
+    total_epoch: int = Form(default=200),
+    batch_size: int = Form(default=4),
+    sample_rate: int = Form(default=40000),
+    gpu: str = Form(default="0"),
+):
+    applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+    applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+    if not applio_root or not applio_python:
+        raise HTTPException(503, "Applio engine environment is not configured")
+    dataset = store.get_dataset(dataset_id)
+    if not dataset or not Path(dataset["path"]).is_dir():
+        raise HTTPException(400, "a registered training dataset is required")
+    if not 1 <= total_epoch <= 10000 or not 1 <= batch_size <= 1024:
+        raise HTTPException(400, "training epoch or batch size is outside the supported range")
+    jid = uuid.uuid4().hex
+    jobs[jid] = {
+        "id": jid,
+        "type": "rvc_training",
+        "status": "queued",
+        "input": dataset_id,
+        "metadata": {"model_name": model_name, "dataset": dataset["name"], "total_epoch": total_epoch},
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    request = TrainingRequest(
+        model_name=model_name,
+        dataset_path=dataset["path"],
+        parameters={
+            "total_epoch": total_epoch,
+            "batch_size": batch_size,
+            "sample_rate": sample_rate,
+            "gpu": gpu,
+        },
+    )
+    bg.add_task(run_training_job, jid, Path(applio_root), applio_python, request, dataset)
+    return jobs[jid]
+
+
+async def run_training_job(jid, applio_root, applio_python, request, dataset):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("submitted Applio preprocess/extract/train/index pipeline")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result = await ApplioTrainingAdapter(applio_root, applio_python).run(request)
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        model_ids = []
+        for artifact_type, source_name in result.artifacts.items():
+            source = Path(source_name)
+            model_id = uuid.uuid4().hex
+            target_dir = MODELS / model_id
+            target_dir.mkdir(parents=True, exist_ok=False)
+            target = target_dir / source.name
+            shutil.copyfile(source, target)
+            model = {
+                "id": model_id,
+                "name": target.name,
+                "type": "rvc",
+                "size": target.stat().st_size,
+                "sha256": sha256_file(target),
+                "license": dataset["license"],
+                "source_url": "",
+                "status": "trained_unverified",
+                "path": str(target),
+                "training_job_id": jid,
+                "artifact_type": artifact_type,
+            }
+            store.save_model(model)
+            model_ids.append(model_id)
+        job.update(
+            status="completed",
+            artifacts={"model_ids": model_ids},
+            result={"engine": result.engine, **result.metadata},
+        )
+        job["log"].append("registered unverified RVC training artifacts")
     except (RuntimeError, ValueError, OSError) as error:
         job.update(status="failed", error=str(error))
         job["log"].append(str(error))

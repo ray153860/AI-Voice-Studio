@@ -11,6 +11,7 @@ class Store:
             db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             db.execute("CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS datasets (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
     def connect(self):
         db=sqlite3.connect(self.path); db.row_factory=sqlite3.Row; return db
     def save_job(self, job):
@@ -51,3 +52,16 @@ class Store:
     def list_models(self):
         with self.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT data FROM models ORDER BY rowid DESC")]
+
+    def save_dataset(self, dataset):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO datasets(id,data) VALUES (?,?)", (dataset["id"], json.dumps(dataset)))
+
+    def get_dataset(self, dataset_id):
+        with self.connect() as db:
+            row = db.execute("SELECT data FROM datasets WHERE id=?", (dataset_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def list_datasets(self):
+        with self.connect() as db:
+            return [json.loads(r[0]) for r in db.execute("SELECT data FROM datasets ORDER BY rowid DESC")]

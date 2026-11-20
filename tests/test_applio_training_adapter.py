@@ -23,6 +23,7 @@ async def test_applio_training_runs_official_stages_and_collects_artifacts(tmp_p
             output = root / "logs" / "DemoVoice"
             output.mkdir(parents=True, exist_ok=True)
             (output / "DemoVoice.pth").write_bytes(b"model")
+            (output / "G_20.pth").write_bytes(b"training checkpoint")
         if stage == "index":
             (root / "logs" / "DemoVoice" / "DemoVoice.index").write_bytes(b"index")
         return 0, f"{stage} complete", ""
@@ -42,6 +43,7 @@ async def test_applio_training_runs_official_stages_and_collects_artifacts(tmp_p
     assert result.engine == "applio-training-cli"
     assert set(result.artifacts) == {"model", "index"}
     assert all(Path(path).is_file() for path in result.artifacts.values())
+    assert Path(result.artifacts["model"]).name == "DemoVoice.pth"
     assert result.metadata["stages"] == ["preprocess", "extract", "train", "index"]
 
 

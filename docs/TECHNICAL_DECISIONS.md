@@ -35,7 +35,7 @@ GPT-SoVITS 适配器通过 `GPT_SOVITS_URL` 配置服务地址。当前 API v2 �
 
 Applio 适配器通过 `APPLIO_ROOT` 和 `APPLIO_PYTHON` 指向独立引擎目录及其 Python。主应用以参数列表调用 `core.py infer`，不使用 shell，也不导入 Applio 的 PyTorch/CUDA 模块。模型必须先登记，并保留来源与许可信息。
 
-Applio 训练适配器依次调用官方 `preprocess`、`extract`、`train`、`index` 命令，限制实验名以阻止路径穿越，并要求最终同时出现 `.pth` 与 `.index` 产物。数据集导入、训练任务持久化、取消、进度解析和产物自动登记仍未实现，因此能力状态保持为“仅适配器协议”。
+Applio 训练适配器依次调用官方 `preprocess`、`extract`、`train`、`index` 命令，限制实验名以阻止路径穿越，并要求最终同时出现推理 `.pth` 与 `.index` 产物。主应用支持多音频数据集登记、SQLite 元数据、后台训练任务和产物复制/校验/登记；会排除 `G_*.pth`、`D_*.pth` 训练检查点，避免将其误认作推理模型。当前取消仍为协作式，阶段内进度解析和真实训练尚未验证。
 
 Demucs 适配器通过 `DEMUCS_EXECUTABLE` 指向独立环境的命令入口，以 `--two-stems=vocals` 生成 vocals/no_vocals。主应用验证两个 WAV 后分别登记输出。混合阶段由本项目实现，负责长度补齐、独立增益和峰值防削波。
 

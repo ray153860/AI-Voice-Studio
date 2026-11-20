@@ -85,7 +85,10 @@ class ApplioTrainingAdapter:
             if code != 0:
                 raise RuntimeError(f"Applio {stage} failed ({code}): {(stderr or stdout).strip()}")
         output_dir = self.applio_root / "logs" / request.model_name
-        model_candidates = sorted(output_dir.glob("*.pth"))
+        preferred_model = output_dir / f"{request.model_name}.pth"
+        model_candidates = [preferred_model] if preferred_model.is_file() else sorted(
+            path for path in output_dir.glob("*.pth") if not path.name.startswith(("G_", "D_"))
+        )
         index_candidates = sorted(output_dir.glob("*.index"))
         if not model_candidates or not index_candidates:
             raise RuntimeError("Applio training completed without both .pth and .index artifacts")

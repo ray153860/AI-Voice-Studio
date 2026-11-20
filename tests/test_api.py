@@ -7,7 +7,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from voice_studio import app as app_module
-from voice_studio.engines import EngineResult
+from voice_studio.engines import EngineResult, TrainingResult
 
 
 def test_home_exposes_diffsinger_submission_controls():
@@ -17,12 +17,17 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="singingDs"' in response.text
     assert 'id="singingExperiment"' in response.text
     assert "提交 DiffSinger 任务" in response.text
+    assert 'id="datasetFiles"' in response.text
+    assert 'id="trainingDataset"' in response.text
+    assert "提交 RVC 训练任务" in response.text
 
 
-def test_capabilities_distinguish_training_adapter_from_task_workflow():
+def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
+    monkeypatch.delenv("APPLIO_ROOT", raising=False)
+    monkeypatch.delenv("APPLIO_PYTHON", raising=False)
     capabilities = TestClient(app_module.app).get("/api/capabilities").json()
 
-    assert capabilities["model_training"] == "adapter_contract_only_no_task_endpoint"
+    assert capabilities["model_training"] == "interface_only_dependencies_missing"
 
 
 def test_project_and_audio_job(tmp_path, monkeypatch):
@@ -367,3 +372,63 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert job["result"]["engine"] == "simulated-diffsinger"
     assert client.get(job["output"]).status_code == 200
     assert client.get("/api/capabilities").json()["singing_synthesis"] == "configured_unverified"
+
+
+def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    datasets = tmp_path / "datasets"
+    models = tmp_path / "models"
+    engine = tmp_path / "applio"
+    for directory in (datasets, models, engine):
+        directory.mkdir()
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "DATASETS", datasets, raising=False)
+    monkeypatch.setattr(app_module, "MODELS", models)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    app_module.jobs.clear()
+    tone = io.BytesIO()
+    sf.write(tone, np.zeros(1600, dtype="float32"), 16000, format="WAV")
+    client = TestClient(app_module.app)
+    imported = client.post(
+        "/api/datasets",
+        data={"name": "Authorized clips", "license_name": "owned-recordings"},
+        files=[
+            ("files", ("clip-a.wav", tone.getvalue(), "audio/wav")),
+            ("files", ("clip-b.wav", tone.getvalue(), "audio/wav")),
+        ],
+    )
+
+    assert imported.status_code == 200
+    dataset = imported.json()
+    assert dataset["files"] == 2
+    assert client.get("/api/datasets").json()[0]["license"] == "owned-recordings"
+
+    class FakeTrainingAdapter:
+        def __init__(self, applio_root, python_executable):
+            self.applio_root = applio_root
+
+        async def run(self, request):
+            assert request.model_name == "DemoVoice"
+            assert Path(request.dataset_path).is_dir()
+            output = self.applio_root / "logs" / "DemoVoice"
+            output.mkdir(parents=True)
+            model = output / "DemoVoice.pth"
+            index = output / "DemoVoice.index"
+            model.write_bytes(b"model")
+            index.write_bytes(b"index")
+            return TrainingResult("simulated-applio-training", {"model": str(model), "index": str(index)})
+
+    monkeypatch.setattr(app_module, "ApplioTrainingAdapter", FakeTrainingAdapter, raising=False)
+    started = client.post(
+        "/api/workflow/train-rvc",
+        data={"dataset_id": dataset["id"], "model_name": "DemoVoice", "total_epoch": "20"},
+    )
+
+    assert started.status_code == 200
+    job = client.get(f"/api/jobs/{started.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["engine"] == "simulated-applio-training"
+    trained = [model for model in client.get("/api/models").json() if model["status"] == "trained_unverified"]
+    assert {Path(model["name"]).suffix for model in trained} == {".pth", ".index"}

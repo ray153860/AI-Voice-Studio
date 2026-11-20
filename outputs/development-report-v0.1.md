@@ -13,7 +13,7 @@
 - TTS、音色转换、人声分离和唱声合成的统一引擎请求/结果协议。
 - GPT-SoVITS API v2 `/tts` HTTP 适配器与统一 TTS 任务入口；需要外部服务和合法模型。
 - Applio `core.py infer` 外部进程适配器与统一 RVC 任务入口；需要独立 Applio 环境和合法 RVC 模型。
-- Applio 官方 `preprocess`、`extract`、`train`、`index` 四阶段训练适配协议，可校验 `.pth`/`.index` 产物；目前没有训练任务 API，也未执行真实训练。
+- Applio 官方 `preprocess`、`extract`、`train`、`index` 四阶段训练工作流：授权音频数据集登记、SQLite 元数据、后台任务、`.pth`/`.index` 产物校验和自动模型登记；当前只通过模拟外部进程验证，未执行真实训练。
 - Demucs 两轨分离适配器；代码接口已完成，权重不随项目分发。
 - DiffSinger `scripts/infer.py acoustic` 外部进程适配器、DS 文件任务入口和图形界面提交控件；需要独立引擎环境、合法模型和 vocoder。
 - 真实 WAV 人声/伴奏混合：长度对齐、独立增益和峰值防削波。
@@ -26,7 +26,7 @@
 - 真实音频处理：已验证。测试生成 WAV，经处理后可解码、采样率和长度保持正确。
 - 服务启动：已验证。Uvicorn 启动成功，首页与能力 API 返回 HTTP 200。
 - API 集成：已验证项目、上传、任务、输出、重试、取消、模型登记和错误输入。
-- 自动测试：34 项通过。
+- 自动测试：36 项通过。
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - GitHub Actions：Ubuntu 与 Windows 两个任务均已远端运行并成功。
@@ -43,7 +43,7 @@
 ## 尚未完成
 
 - GPT-SoVITS、Applio RVC、Demucs 和 DiffSinger 的真实模型推理验证。
-- 训练任务 API、数据集导入、进度解析、取消和训练产物自动登记。
+- 训练阶段内进度解析、可中断子进程取消、断点续训验证和真实 GPU 训练。
 - MIDI/歌词/音素对齐与原创唱声生成。
 - GPU 验证、主观试听、音质对比和 Windows 原生打包。
 - 歌词到音素/音节的对齐和真实唱声模型推理。
@@ -60,4 +60,4 @@
 
 已核验账户内不存在同名仓库，并创建公开独立仓库：<https://github.com/ray153860/AI-Voice-Studio>。
 
-本地完整提交历史已推送到 `main`。包含 DiffSinger 工作流的提交 `2106075` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44681076459>。训练适配器提交仍须以推送后的独立 CI 结果为准。
+本地完整提交历史已推送到 `main`。训练适配协议提交 `bf40476` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44681664032>。数据集与训练任务提交仍须以推送后的独立 CI 结果为准。
