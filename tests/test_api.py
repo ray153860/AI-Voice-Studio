@@ -20,6 +20,9 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="datasetFiles"' in response.text
     assert 'id="trainingDataset"' in response.text
     assert "提交 RVC 训练任务" in response.text
+    assert 'id="coverSong"' in response.text
+    assert 'id="coverModel"' in response.text
+    assert "运行翻唱预设工作流" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -432,3 +435,70 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     assert job["result"]["engine"] == "simulated-applio-training"
     trained = [model for model in client.get("/api/models").json() if model["status"] == "trained_unverified"]
     assert {Path(model["name"]).suffix for model in trained} == {".pth", ".index"}
+
+
+def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    engine = tmp_path / "applio"
+    for directory in (inbox, outputs, engine):
+        directory.mkdir()
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.save_model(
+        {"id": "cover-voice", "type": "rvc", "name": "voice.pth", "path": str(model_path), "status": "registered_unverified"}
+    )
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+
+    class FakeSeparator:
+        def __init__(self, executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            vocals = self.output_dir / "cover-vocals.wav"
+            accompaniment = self.output_dir / "cover-accompaniment.wav"
+            sf.write(vocals, np.sin(np.arange(8000) * 0.1) * 0.2, 8000)
+            sf.write(accompaniment, np.sin(np.arange(8000) * 0.05) * 0.1, 8000)
+            return EngineResult(
+                str(vocals),
+                8000,
+                "simulated-demucs",
+                artifacts={"vocals": str(vocals), "accompaniment": str(accompaniment)},
+            )
+
+    class FakeConverter:
+        def __init__(self, applio_root, python_executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            assert request.parameters["model_path"] == str(model_path)
+            converted = self.output_dir / "cover-converted.wav"
+            sf.write(converted, np.sin(np.arange(8000) * 0.1) * 0.25, 8000)
+            return EngineResult(str(converted), 8000, "simulated-applio")
+
+    monkeypatch.setattr(app_module, "DemucsAdapter", FakeSeparator)
+    monkeypatch.setattr(app_module, "ApplioAdapter", FakeConverter)
+    song = io.BytesIO()
+    sf.write(song, np.zeros(8000, dtype="float32"), 8000, format="WAV")
+    client = TestClient(app_module.app)
+    started = client.post(
+        "/api/workflow/cover",
+        data={"model_id": "cover-voice", "pitch": "2"},
+        files={"song": ("song.wav", song.getvalue(), "audio/wav")},
+    )
+
+    assert started.status_code == 200
+    job = client.get(f"/api/jobs/{started.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["stages"] == ["separation", "voice_conversion", "quality_comparison", "mix"]
+    assert job["result"]["engines"] == {"separation": "simulated-demucs", "voice_conversion": "simulated-applio"}
+    assert client.get(job["output"]).status_code == 200

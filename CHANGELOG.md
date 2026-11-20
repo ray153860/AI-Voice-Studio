@@ -8,3 +8,4 @@
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.
 - Added validated multi-file training dataset registration, RVC training jobs, and automatic unverified artifact registration.
 - Added lightweight monophonic pitch-range screening for objective singing and conversion checks.
+- Added the preset cover workflow: separation, RVC conversion, objective before/after comparison, and accompaniment mix.

@@ -22,6 +22,7 @@ from .models import sha256_file, validate_model_filename
 from .quality import analyze_audio, compare_audio
 from .store import Store
 from .ui import PAGE
+from .workflows import run_cover_workflow
 
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
 INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
@@ -262,6 +263,113 @@ async def run_mix_job(jid, vocals_path, accompaniment_path, vocal_gain_db, accom
         job.update(status="failed", error=str(error))
         job["log"].append(str(error))
     store.save_job(job)
+@app.post("/api/workflow/cover")
+async def cover_workflow(
+    bg: BackgroundTasks,
+    song: UploadFile,
+    model_id: str = Form(),
+    index_model_id: str = Form(default=""),
+    pitch: int = Form(default=0),
+    f0_method: str = Form(default="rmvpe"),
+    vocal_gain_db: float = Form(default=0),
+    accompaniment_gain_db: float = Form(default=0),
+):
+    demucs_executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
+    applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+    applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+    if not demucs_executable or not applio_root or not applio_python:
+        raise HTTPException(503, "Demucs and Applio engine environments must both be configured")
+    model = store.get_model(model_id)
+    if not model or model["type"] != "rvc" or Path(model["name"]).suffix.lower() != ".pth":
+        raise HTTPException(400, "a registered RVC .pth inference model is required")
+    index_path = ""
+    if index_model_id:
+        index_model = store.get_model(index_model_id)
+        if not index_model or index_model["type"] != "rvc" or Path(index_model["name"]).suffix.lower() != ".index":
+            raise HTTPException(400, "index_model_id must reference a registered RVC .index file")
+        index_path = index_model["path"]
+    jid = uuid.uuid4().hex
+    safe = Path(song.filename or "song.wav").name
+    source = INBOX / f"{jid}_{safe}"
+    source.write_bytes(await song.read())
+    try:
+        metadata = inspect_audio(source)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        source.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    jobs[jid] = {
+        "id": jid,
+        "type": "cover_workflow",
+        "status": "queued",
+        "input": safe,
+        "model_id": model_id,
+        "metadata": metadata,
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    conversion_parameters = {
+        "model_path": model["path"],
+        "index_path": index_path,
+        "pitch": pitch,
+        "f0_method": f0_method,
+    }
+    bg.add_task(
+        run_cover_job,
+        jid,
+        source,
+        demucs_executable,
+        Path(applio_root),
+        applio_python,
+        conversion_parameters,
+        vocal_gain_db,
+        accompaniment_gain_db,
+    )
+    return jobs[jid]
+
+
+async def run_cover_job(
+    jid,
+    source,
+    demucs_executable,
+    applio_root,
+    applio_python,
+    conversion_parameters,
+    vocal_gain_db,
+    accompaniment_gain_db,
+):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("running separation, RVC conversion, quality comparison and mix")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        output = OUT / f"cover-{jid}.wav"
+        result = await run_cover_workflow(
+            DemucsAdapter(demucs_executable, OUT),
+            ApplioAdapter(applio_root, applio_python, OUT),
+            source,
+            output,
+            conversion_parameters,
+            vocal_gain_db=vocal_gain_db,
+            accompaniment_gain_db=accompaniment_gain_db,
+        )
+        if cancel_flags.get(jid):
+            output.unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result.pop("artifacts", None)
+        job.update(status="completed", output=f"/api/outputs/{output.name}", result=result)
+        job["log"].append("completed preset cover workflow; subjective listening still required")
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
+
+
 @app.post("/api/workflow/separate")
 async def separation_workflow(
     bg: BackgroundTasks,
