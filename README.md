@@ -19,6 +19,8 @@ Python 3.11+。在隔离开发环境安装 `pip install -e .` 后运行 `python 
 
 外部引擎分别通过 `GPT_SOVITS_URL`、`APPLIO_ROOT`/`APPLIO_PYTHON`、`DEMUCS_EXECUTABLE`、`DIFFSINGER_ROOT`/`DIFFSINGER_PYTHON` 配置。主应用不捆绑这些引擎、CUDA、模型或声库。
 
+Windows 源码运行、隔离构建和验证边界见 [`docs/WINDOWS.md`](docs/WINDOWS.md)。GitHub Actions 会生成未签名 one-folder 构建并做本地 API 冒烟测试；这不等同于已完成所有 Windows 11 硬件兼容或代码签名验收。
+
 ## 许可
 
 项目代码采用 MIT。模型权重、数据集与用户音频不随仓库分发；使用者须核实各自来源授权。

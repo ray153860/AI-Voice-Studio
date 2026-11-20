@@ -7,3 +7,6 @@ models/
 data/
 work/runtime/
 src/*.egg-info/
+build/
+dist/
+*.spec

@@ -22,13 +22,14 @@
 - 标准 MIDI 解析：PPQ、BPM、音符、速度、时长、休止和歌词元事件；当前不生成唱声。
 - 音频质量筛查与处理前后比较：峰值、RMS、削波、静音占比、内部静音段、采样突变，以及单声部音频的有声比例、中位音高和音域半音数；结果不替代主观试听。
 - Ubuntu/Windows GitHub Actions 测试配置。
+- Windows PyInstaller one-folder 构建、打包后 API 冒烟测试和未签名构建产物上传工作流；实际工作流结果以远端运行为准。
 
 ## 验证状态
 
 - 真实音频处理：已验证。测试生成 WAV，经处理后可解码、采样率和长度保持正确。
 - 服务启动：已验证。Uvicorn 启动成功，首页与能力 API 返回 HTTP 200。
 - API 集成：已验证项目、上传、任务、输出、重试、取消、模型登记和错误输入。
-- 自动测试：41 项通过，并在 `-W error` 模式下无警告。
+- 自动测试：42 项通过，并在 `-W error` 模式下无警告。
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - GitHub Actions：Ubuntu 与 Windows 两个任务均已远端运行并成功。
@@ -47,9 +48,9 @@
 - GPT-SoVITS、Applio RVC、Demucs 和 DiffSinger 的真实模型推理验证。
 - 训练阶段内进度解析、可中断子进程取消、断点续训验证和真实 GPU 训练。
 - MIDI/歌词/音素对齐与原创唱声生成。
-- GPU 验证、主观试听、音质对比和 Windows 原生打包。
+- GPU 验证、主观试听、真实 AI 音质对比和 Windows 安装程序。
 - 歌词到音素/音节的对齐和真实唱声模型推理。
-- Windows 11 原生打包与签名发布。
+- Windows 11 多设备验收、安装程序和代码签名发布。
 
 ## 已知问题
 
@@ -61,4 +62,4 @@
 
 已核验账户内不存在同名仓库，并创建公开独立仓库：<https://github.com/ray153860/AI-Voice-Studio>。
 
-本地完整提交历史已推送到 `main`。分块优化提交 `1d80e34` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44721513939>。后续测试基础设施提交仍须以推送后的独立 CI 结果为准。
+本地完整提交历史已推送到 `main`。无警告测试提交 `df3ad51` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44722047370>。Windows 打包工作流仍须以首次远端运行结果为准。
