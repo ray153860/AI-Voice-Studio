@@ -7,6 +7,7 @@
 - Added persisted AI cover workflow parameters and end-to-end preset retry.
 - Added real audio-mix retry and simulated-contract RVC training retry, completing retry coverage for current workflow job types.
 - Added cooperative cancellation checks around real audio mixing, including output cleanup when cancellation arrives after processing.
+- Added chunked, size-limited base audio uploads with HTTP 413 responses and partial-file cleanup.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
 - Added real WAV mixing, MIDI inspection, objective audio quality analysis, and Linux/Windows CI.
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.

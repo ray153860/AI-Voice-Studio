@@ -26,12 +26,31 @@ from .workflows import run_cover_workflow
 
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
 INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
+MAX_AUDIO_UPLOAD_BYTES = 512 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 for p in (INBOX, OUT, MODELS, DATASETS): p.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="AI Voice Studio", version="0.1.0")
 jobs = {}
 cancel_flags = {}
 store = Store(ROOT / "studio.sqlite3")
 store.recover_incomplete_jobs()
+
+
+async def save_upload_limited(upload: UploadFile, target: Path, limit: int, label: str) -> int:
+    size = 0
+    try:
+        with target.open("wb") as stream:
+            while chunk := await upload.read(UPLOAD_CHUNK_BYTES):
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(413, f"{label} upload exceeds the {limit} byte limit")
+                stream.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return size
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(): return PAGE
 @app.get("/api/projects")
@@ -218,7 +237,7 @@ async def workflow(file: UploadFile, bg: BackgroundTasks):
     jid=uuid.uuid4().hex
     safe=Path(file.filename or "audio.wav").name
     src=INBOX/f"{jid}_{safe}"
-    src.write_bytes(await file.read())
+    await save_upload_limited(file, src, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try: meta=inspect_audio(src)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as e: src.unlink(missing_ok=True); raise HTTPException(400,str(e)) from e
     jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"metadata":meta,"log":[]}

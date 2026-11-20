@@ -111,6 +111,20 @@ def test_invalid_audio_rejected(tmp_path, monkeypatch):
     assert client.post("/api/workflow/audio", files={"file": ("bad.wav", b"not audio")}).status_code == 400
 
 
+def test_audio_upload_rejects_payload_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8, raising=False)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/audio",
+        files={"file": ("too-large.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "audio upload exceeds the 8 byte limit"
+    assert not list(tmp_path.iterdir())
+
+
 def test_cancel_queued_job(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
