@@ -4,6 +4,43 @@ import numpy as np
 import soundfile as sf
 
 
+def analyze_pitch(audio: np.ndarray, sample_rate: int) -> dict:
+    mono = np.asarray(audio, dtype="float32").reshape(-1)
+    frame_length = max(32, round(sample_rate * 0.05))
+    hop_length = max(1, frame_length // 2)
+    min_lag = max(1, int(sample_rate / 1000))
+    max_lag = min(frame_length - 2, int(sample_rate / 60))
+    if len(mono) < frame_length or max_lag <= min_lag:
+        return {"voiced_ratio": 0.0, "pitch_median_hz": None, "pitch_low_hz": None, "pitch_high_hz": None, "range_semitones": None}
+    pitches = []
+    frame_count = 0
+    window = np.hanning(frame_length).astype("float32")
+    for start in range(0, len(mono) - frame_length + 1, hop_length):
+        frame_count += 1
+        frame = mono[start : start + frame_length]
+        if float(np.sqrt(np.mean(np.square(frame)))) < 10 ** (-50 / 20):
+            continue
+        frame = (frame - np.mean(frame)) * window
+        correlation = np.correlate(frame, frame, mode="full")[frame_length - 1 :]
+        if correlation[0] <= 1e-12:
+            continue
+        candidates = correlation[min_lag : max_lag + 1]
+        lag = min_lag + int(np.argmax(candidates))
+        if correlation[lag] / correlation[0] < 0.3:
+            continue
+        pitches.append(sample_rate / lag)
+    if not pitches:
+        return {"voiced_ratio": 0.0, "pitch_median_hz": None, "pitch_low_hz": None, "pitch_high_hz": None, "range_semitones": None}
+    low, median, high = np.percentile(pitches, [10, 50, 90])
+    return {
+        "voiced_ratio": len(pitches) / frame_count,
+        "pitch_median_hz": float(median),
+        "pitch_low_hz": float(low),
+        "pitch_high_hz": float(high),
+        "range_semitones": float(12 * np.log2(high / low)) if high > low else 0.0,
+    }
+
+
 def analyze_audio(path: Path):
     audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
     if len(audio) == 0:
@@ -43,6 +80,7 @@ def analyze_audio(path: Path):
         "silence_ratio": float(np.mean(silent)),
         "interior_silent_gaps": interior_silent_gaps,
         "max_sample_step": float(np.max(steps)),
+        "pitch": analyze_pitch(np.mean(audio, axis=1), sample_rate),
         "flags": {
             "clipping_detected": clipping_ratio > 0,
             "possible_dropouts": interior_silent_gaps > 0,

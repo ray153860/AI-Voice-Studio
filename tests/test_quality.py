@@ -1,7 +1,7 @@
 import numpy as np
 import soundfile as sf
 
-from voice_studio.quality import analyze_audio, compare_audio
+from voice_studio.quality import analyze_audio, analyze_pitch, compare_audio
 
 
 def test_audio_quality_metrics_detect_gap_and_clipping(tmp_path):
@@ -32,3 +32,21 @@ def test_compare_audio_reports_deltas_without_quality_claim(tmp_path):
     assert result["delta_after_minus_before"]["clipping_ratio"] == -1
     assert result["delta_after_minus_before"]["peak"] == -0.5
     assert "not a listening-quality verdict" in result["interpretation"]
+
+
+def test_pitch_analysis_detects_one_octave_change():
+    sample_rate = 8000
+    time = np.arange(sample_rate, dtype="float32") / sample_rate
+    audio = np.concatenate(
+        [
+            np.sin(2 * np.pi * 220 * time) * 0.4,
+            np.sin(2 * np.pi * 440 * time) * 0.4,
+        ]
+    ).astype("float32")
+
+    result = analyze_pitch(audio, sample_rate)
+
+    assert result["voiced_ratio"] > 0.9
+    assert 210 < result["pitch_low_hz"] < 230
+    assert 420 < result["pitch_high_hz"] < 460
+    assert 10 < result["range_semitones"] < 14

@@ -18,7 +18,7 @@
 - DiffSinger `scripts/infer.py acoustic` 外部进程适配器、DS 文件任务入口和图形界面提交控件；需要独立引擎环境、合法模型和 vocoder。
 - 真实 WAV 人声/伴奏混合：长度对齐、独立增益和峰值防削波。
 - 标准 MIDI 解析：PPQ、BPM、音符、速度、时长、休止和歌词元事件；当前不生成唱声。
-- 音频质量筛查与处理前后比较：峰值、RMS、削波、静音占比、内部静音段和采样突变；结果不替代主观试听。
+- 音频质量筛查与处理前后比较：峰值、RMS、削波、静音占比、内部静音段、采样突变，以及单声部音频的有声比例、中位音高和音域半音数；结果不替代主观试听。
 - Ubuntu/Windows GitHub Actions 测试配置。
 
 ## 验证状态
@@ -26,7 +26,7 @@
 - 真实音频处理：已验证。测试生成 WAV，经处理后可解码、采样率和长度保持正确。
 - 服务启动：已验证。Uvicorn 启动成功，首页与能力 API 返回 HTTP 200。
 - API 集成：已验证项目、上传、任务、输出、重试、取消、模型登记和错误输入。
-- 自动测试：36 项通过。
+- 自动测试：37 项通过。
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - GitHub Actions：Ubuntu 与 Windows 两个任务均已远端运行并成功。
@@ -60,4 +60,4 @@
 
 已核验账户内不存在同名仓库，并创建公开独立仓库：<https://github.com/ray153860/AI-Voice-Studio>。
 
-本地完整提交历史已推送到 `main`。训练适配协议提交 `bf40476` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44681664032>。数据集与训练任务提交仍须以推送后的独立 CI 结果为准。
+本地完整提交历史已推送到 `main`。数据集与训练任务提交 `cfa8edf` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44682634318>。后续质量指标提交仍须以推送后的独立 CI 结果为准。
