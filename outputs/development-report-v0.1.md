@@ -22,7 +22,7 @@
 - 标准 MIDI 解析：PPQ、BPM、音符、速度、时长、休止和歌词元事件；当前不生成唱声。
 - 音频质量筛查与处理前后比较：峰值、RMS、削波、静音占比、内部静音段、采样突变，以及单声部音频的有声比例、中位音高和音域半音数；结果不替代主观试听。
 - Ubuntu/Windows GitHub Actions 测试配置。
-- Windows PyInstaller one-folder 构建、打包后 API 冒烟测试和未签名构建产物上传工作流；实际工作流结果以远端运行为准。
+- Windows PyInstaller one-folder 构建、打包后 API 冒烟测试和未签名构建产物上传工作流；首次远端构建、启动与上传均已成功。
 
 ## 验证状态
 
@@ -33,6 +33,7 @@
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - GitHub Actions：Ubuntu 与 Windows 两个任务均已远端运行并成功。
+- Windows 构建：提交 `d041fea` 已完成 PyInstaller 打包、隐藏启动、能力 API HTTP 200 冒烟测试和产物上传。产物 `AI-Voice-Studio-windows-unsigned` 为 30,802,575 字节，摘要 `sha256:afb9ecd81208f671f042ea16e4be7ee7c84eb339ac86d221705ddda84e52f2d8`。
 
 ## 技术选型
 
@@ -62,4 +63,4 @@
 
 已核验账户内不存在同名仓库，并创建公开独立仓库：<https://github.com/ray153860/AI-Voice-Studio>。
 
-本地完整提交历史已推送到 `main`。无警告测试提交 `df3ad51` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44722047370>。Windows 打包工作流仍须以首次远端运行结果为准。
+本地完整提交历史已推送到 `main`。Windows 构建提交 `d041fea` 的常规 CI 与独立打包流程均成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44722571074>、<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44722571001>。

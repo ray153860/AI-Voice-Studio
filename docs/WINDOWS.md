@@ -4,6 +4,8 @@
 
 GitHub Actions 在 `windows-latest` 上执行 Python 测试，并使用 PyInstaller 生成 one-folder 构建。构建工作流会隐藏启动程序、轮询 `http://127.0.0.1:8765/api/capabilities`，确认 HTTP 200 后停止进程并上传未签名构建产物。
 
+首次远端验证已于 2026-11-20 成功完成：[Windows Build 运行记录](https://github.com/ray153860/AI-Voice-Studio/actions/runs/44722571001)。上传产物名为 `AI-Voice-Studio-windows-unsigned`，大小 30,802,575 字节，GitHub 记录的摘要为 `sha256:afb9ecd81208f671f042ea16e4be7ee7c84eb339ac86d221705ddda84e52f2d8`。
+
 这证明构建产物可在 GitHub 的 Windows runner 启动，不等同于已在所有 Windows 11 设备、显卡驱动或 AI 引擎组合上完成兼容性验收。
 
 ## 源码运行
