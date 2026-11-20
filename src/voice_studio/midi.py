@@ -17,16 +17,16 @@ def align_lyrics_to_notes(notes: list[dict], lyrics: str) -> list[dict]:
         if note["start_tick"] < occupied_until:
             raise ValueError("Singing lyric alignment currently requires a monophonic MIDI melody")
         occupied_until = note["start_tick"] + note["duration_ticks"]
-    tokens = tokenize_lyrics(lyrics)
-    if len(tokens) != len(ordered):
-        raise ValueError(f"lyric syllable count ({len(tokens)}) must equal note count ({len(ordered)})")
+    syllables = tokenize_lyrics(lyrics)
+    if len(syllables) != len(ordered):
+        raise ValueError(f"lyric syllable count ({len(syllables)}) must equal note count ({len(ordered)})")
     aligned = []
     previous_lyric = None
-    for note, token in zip(ordered, tokens, strict=True):
-        slur = token == "-"
+    for note, syllable in zip(ordered, syllables, strict=True):
+        slur = syllable == "-"
         if slur and previous_lyric is None:
             raise ValueError("a slur marker cannot be the first lyric syllable")
-        lyric = "" if slur else token
+        lyric = "" if slur else syllable
         if lyric:
             previous_lyric = lyric
         aligned.append({**note, "lyric": lyric, "slur": slur})
