@@ -47,6 +47,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="coverChunk"' in response.text
     assert 'id="coverOverlap"' in response.text
     assert "运行翻唱预设工作流" in response.text
+    assert 'id="jobControlId"' in response.text
+    assert "重新执行任务" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -199,6 +201,14 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert job["status"] == "completed"
     assert job["result"]["engine"] == "simulated-gpt-sovits"
     assert client.get(job["output"]).status_code == 200
+
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["id"] != job["id"]
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["engine"] == "simulated-gpt-sovits"
 
 
 def test_voice_conversion_requires_configured_engine(tmp_path, monkeypatch):

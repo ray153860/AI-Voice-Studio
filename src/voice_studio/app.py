@@ -755,6 +755,15 @@ async def tts_workflow(
         "status": "queued",
         "input": safe,
         "metadata": metadata,
+        "retry": {
+            "reference_audio": str(source),
+            "text": text.strip(),
+            "parameters": {
+                "text_lang": text_lang,
+                "prompt_lang": prompt_lang,
+                "prompt_text": prompt_text,
+            },
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
@@ -827,6 +836,33 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "tts":
+        engine_url = os.environ.get("GPT_SOVITS_URL", "").strip()
+        if not engine_url:
+            raise HTTPException(503, "GPT-SoVITS engine URL is not configured")
+        retry = job.get("retry") or {}
+        reference_audio = Path(retry.get("reference_audio", ""))
+        if not reference_audio.is_file():
+            raise HTTPException(404, "original reference audio is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "tts",
+            "status": "queued",
+            "input": job["input"],
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        request = EngineRequest(
+            text=retry.get("text", ""),
+            reference_audio=str(reference_audio),
+            parameters=retry.get("parameters", {}),
+        )
+        bg.add_task(run_tts_job, new_id, engine_url, request)
+        return jobs[new_id]
     if job.get("type", "audio_processing") != "audio_processing":
         raise HTTPException(409, "retry is not implemented for this job type")
     old=INBOX/f"{jid}_{Path(job['input']).name}"
