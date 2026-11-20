@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from .adapters.applio import ApplioAdapter
 from .adapters.demucs import DemucsAdapter
+from .adapters.diffsinger import DiffSingerAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest
@@ -81,12 +83,13 @@ async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
     rvc_status = "configured_unverified" if os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON") else "interface_only_dependencies_missing"
     separation_status = "configured_unverified" if os.environ.get("DEMUCS_EXECUTABLE") else "interface_only_dependencies_missing"
+    singing_status = "configured_unverified" if os.environ.get("DIFFSINGER_ROOT") and os.environ.get("DIFFSINGER_PYTHON") else "interface_only_dependencies_missing"
     return {
         "audio_processing": "verified_real_processing",
         "tts": tts_status,
         "voice_conversion": rvc_status,
         "vocal_separation": separation_status,
-        "singing_synthesis": "interface_only_dependencies_missing",
+        "singing_synthesis": singing_status,
         "model_training": "not_developed",
     }
 @app.get("/api/engines")
@@ -95,6 +98,7 @@ async def engines():
         {"id": "gpt-sovits", "capability": "tts", "configured": bool(os.environ.get("GPT_SOVITS_URL")), "verification": "not_run"},
         {"id": "applio", "capability": "voice_conversion", "configured": bool(os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON")), "verification": "not_run"},
         {"id": "demucs", "capability": "vocal_separation", "configured": bool(os.environ.get("DEMUCS_EXECUTABLE")), "verification": "not_run"},
+        {"id": "diffsinger", "capability": "singing_synthesis", "configured": bool(os.environ.get("DIFFSINGER_ROOT") and os.environ.get("DIFFSINGER_PYTHON")), "verification": "not_run"},
     ]
 @app.get("/api/models")
 async def list_models(): return store.list_models()
@@ -272,6 +276,89 @@ async def run_separation_job(jid, executable, request):
         job.update(status="failed", error=str(error))
         job["log"].append(str(error))
     store.save_job(job)
+
+
+@app.post("/api/workflow/singing")
+async def singing_workflow(
+    bg: BackgroundTasks,
+    ds_file: UploadFile,
+    experiment: str = Form(),
+    speaker: str = Form(default=""),
+    language: str = Form(default=""),
+    key: int = Form(default=0),
+    steps: int | None = Form(default=None),
+):
+    diffsinger_root = os.environ.get("DIFFSINGER_ROOT", "").strip()
+    diffsinger_python = os.environ.get("DIFFSINGER_PYTHON", "").strip()
+    if not diffsinger_root or not diffsinger_python:
+        raise HTTPException(503, "DiffSinger engine environment is not configured")
+    if not experiment.strip():
+        raise HTTPException(400, "DiffSinger experiment name is required")
+    safe = Path(ds_file.filename or "song.ds").name
+    if Path(safe).suffix.lower() != ".ds":
+        raise HTTPException(400, "singing input must be a DiffSinger .ds file")
+    jid = uuid.uuid4().hex
+    source = INBOX / f"{jid}_{safe}"
+    content = await ds_file.read()
+    try:
+        document = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise HTTPException(400, "DiffSinger DS file must contain valid UTF-8 JSON") from error
+    if not isinstance(document, (dict, list)) or not document:
+        raise HTTPException(400, "DiffSinger DS file must contain at least one segment")
+    source.write_bytes(content)
+    jobs[jid] = {
+        "id": jid,
+        "type": "singing_synthesis",
+        "status": "queued",
+        "input": safe,
+        "metadata": {"format": "DiffSinger DS", "experiment": experiment.strip()},
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    request = EngineRequest(
+        parameters={
+            "ds_path": str(source),
+            "experiment": experiment.strip(),
+            "speaker": speaker.strip(),
+            "language": language.strip(),
+            "key": key,
+            "steps": steps,
+        }
+    )
+    bg.add_task(run_singing_job, jid, Path(diffsinger_root), diffsinger_python, request)
+    return jobs[jid]
+
+
+async def run_singing_job(jid, diffsinger_root, diffsinger_python, request):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("submitted DiffSinger DS file to acoustic inference")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result = await DiffSingerAdapter(diffsinger_root, diffsinger_python, OUT).run(request)
+        output = Path(result.output_audio)
+        if cancel_flags.get(jid):
+            output.unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        job.update(
+            status="completed",
+            output=f"/api/outputs/{output.name}",
+            result={"sample_rate": result.sample_rate, "engine": result.engine, **result.metadata},
+        )
+        job["log"].append("received and validated DiffSinger WAV output")
+    except (RuntimeError, ValueError, OSError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
+
+
 @app.post("/api/workflow/voice-conversion")
 async def voice_conversion_workflow(
     bg: BackgroundTasks,

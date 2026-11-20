@@ -18,7 +18,7 @@ AI Voice Studio 聚焦于把独立音频引擎组织成可复现的项目、任�
 | TTS | GPT-SoVITS | MIT 源码仓库；已按 API v2 `/tts` POST 契约实现 HTTP 适配器。当前只通过模拟 HTTP 响应验证契约，未运行真实模型。具体版本、语言模型和权重仍逐项登记授权；CPU 性能与显存取决于模型和版本。 |
 | RVC | Applio | 仓库 MIT；已按官方 `core.py infer` CLI 实现独立进程适配器和统一任务入口。当前只通过模拟进程验证命令和输出，未运行真实模型；发布前仍需钉住可复现版本。 |
 | 分离 | Demucs | 采用 adefossez 维护仓库的 CLI 契约；源码 MIT，但官方 README 明确说明预训练权重许可不清晰。本项目只提供独立 CLI 适配器，不打包或再分发权重。UVR 是桌面集成参考，不直接复刻其 UI。 |
-| 歌声合成 | OpenVPI DiffSinger | Apache-2.0 源码，模型、声库各自授权。功能适配强，推理依赖与数据准备成本高；先定义标准歌词/音符协议，再做独立适配器。 |
+| 歌声合成 | OpenVPI DiffSinger | Apache-2.0 源码，模型、声库各自授权。已按官方 `scripts/infer.py acoustic DS_FILE --exp EXP --out DIR --title TITLE` 契约实现独立进程适配器和 DS 文件任务入口；当前仅模拟进程验证，未运行真实模型。 |
 | 歌声合成 | NNSVS | MIT，研究工具链，训练/配置和声库准备成本较高；作为替代引擎，不作为首发集成。 |
 | 歌声工作台 | OpenUtau | MIT，成熟桌面编辑器和插件生态；项目定位不同，更适合作为兼容/互操作参考，非本软件内嵌 UI。 |
 | 同类整合 | UtaiSynthesizer | 功能交叉明显，包含歌声合成、转换、模型管理。其文档清楚区分应用源码与独立权重许可，适合作为功能/许可管理参考；不复制 AGPL 或其组件。 |
@@ -29,13 +29,15 @@ AI Voice Studio 聚焦于把独立音频引擎组织成可复现的项目、任�
 2. 通过独立进程适配 Applio RVC，实测一段合法合成语音样本；比较分块边界连续性和峰值/响度，不将可播放等同于听感验收。
 3. 增加分离器，再组合翻唱预设工作流。
 4. 以 GPT-SoVITS 独立服务实现参考音频 TTS。
-5. 歌声合成单列阶段，先处理歌词音素与 MIDI 对齐；没有合规可用声库前只报告输入解析状态。
+5. 歌声合成单列阶段：先以 DS 文件对接 DiffSinger，再处理歌词音素、MIDI 到 DS 的自动对齐；没有合规可用声库前只报告接口/模拟验证状态。
 
 GPT-SoVITS 适配器通过 `GPT_SOVITS_URL` 配置服务地址。当前 API v2 接受服务器可访问的 `ref_audio_path`，因此本机进程可直接使用工作区路径；远程或容器服务必须显式共享参考音频目录。该限制未满足时不能宣称远程部署可用。
 
 Applio 适配器通过 `APPLIO_ROOT` 和 `APPLIO_PYTHON` 指向独立引擎目录及其 Python。主应用以参数列表调用 `core.py infer`，不使用 shell，也不导入 Applio 的 PyTorch/CUDA 模块。模型必须先登记，并保留来源与许可信息。
 
 Demucs 适配器通过 `DEMUCS_EXECUTABLE` 指向独立环境的命令入口，以 `--two-stems=vocals` 生成 vocals/no_vocals。主应用验证两个 WAV 后分别登记输出。混合阶段由本项目实现，负责长度补齐、独立增益和峰值防削波。
+
+DiffSinger 适配器通过 `DIFFSINGER_ROOT` 和 `DIFFSINGER_PYTHON` 指向独立引擎目录及其 Python。任务输入是官方 JSON `.ds` 格式和已存在于该引擎环境中的实验/模型名称；主应用验证生成 WAV，但不捆绑检查点、声库或 vocoder。当前接口只通过模拟外部进程验证。
 
 ## 许可规则
 

@@ -1,5 +1,6 @@
 import io
 import struct
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -7,6 +8,15 @@ from fastapi.testclient import TestClient
 
 from voice_studio import app as app_module
 from voice_studio.engines import EngineResult
+
+
+def test_home_exposes_diffsinger_submission_controls():
+    response = TestClient(app_module.app).get("/")
+
+    assert response.status_code == 200
+    assert 'id="singingDs"' in response.text
+    assert 'id="singingExperiment"' in response.text
+    assert "提交 DiffSinger 任务" in response.text
 
 
 def test_project_and_audio_job(tmp_path, monkeypatch):
@@ -308,3 +318,46 @@ def test_midi_inspection_api(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "parsed_no_synthesis"
     assert response.json()["notes"][0]["pitch"] == 60
+
+
+def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    engine = tmp_path / "diffsinger"
+    for directory in (inbox, outputs, engine):
+        directory.mkdir()
+    monkeypatch.setenv("DIFFSINGER_ROOT", str(engine))
+    monkeypatch.setenv("DIFFSINGER_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    app_module.jobs.clear()
+    app_module.cancel_flags.clear()
+
+    class FakeAdapter:
+        def __init__(self, diffsinger_root, python_executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            assert request.parameters["experiment"] == "licensed-singer"
+            assert Path(request.parameters["ds_path"]).suffix == ".ds"
+            target = self.output_dir / "simulated-singing.wav"
+            sf.write(target, np.zeros(4410, dtype="float32"), 44100)
+            return EngineResult(str(target), 44100, "simulated-diffsinger", {"duration": 0.1})
+
+    monkeypatch.setattr(app_module, "DiffSingerAdapter", FakeAdapter, raising=False)
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/singing",
+        data={"experiment": "licensed-singer", "speaker": "singer-a", "key": "1"},
+        files={"ds_file": ("song.ds", b'[{"ph_seq":"a"}]', "application/json")},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["engine"] == "simulated-diffsinger"
+    assert client.get(job["output"]).status_code == 200
+    assert client.get("/api/capabilities").json()["singing_synthesis"] == "configured_unverified"
