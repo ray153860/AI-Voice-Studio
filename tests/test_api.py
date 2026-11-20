@@ -1,4 +1,5 @@
 import io
+import struct
 
 import numpy as np
 import soundfile as sf
@@ -289,3 +290,21 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert job["status"] == "completed"
     assert job["result"]["duration"] == 1.0
     assert client.get(job["output"]).status_code == 200
+
+
+def test_midi_inspection_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    events = b"\x00\x90\x3c\x64\x83\x60\x80\x3c\x00\x00\xff\x2f\x00"
+    midi = (
+        b"MThd"
+        + struct.pack(">IHHH", 6, 0, 1, 480)
+        + b"MTrk"
+        + struct.pack(">I", len(events))
+        + events
+    )
+    client = TestClient(app_module.app)
+    response = client.post("/api/midi/inspect", files={"file": ("melody.mid", midi, "audio/midi")})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "parsed_no_synthesis"
+    assert response.json()["notes"][0]["pitch"] == 60

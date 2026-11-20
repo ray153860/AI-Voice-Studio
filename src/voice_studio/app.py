@@ -13,6 +13,7 @@ from .adapters.demucs import DemucsAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest
+from .midi import parse_midi
 from .models import sha256_file, validate_model_filename
 from .store import Store
 from .ui import PAGE
@@ -38,6 +39,19 @@ async def create_project(payload: dict):
     return {"id":pid,"name":name}
 @app.get("/api/jobs")
 async def list_jobs(): return store.list_jobs()
+@app.post("/api/midi/inspect")
+async def inspect_midi(file: UploadFile):
+    safe = Path(file.filename or "melody.mid").name
+    if Path(safe).suffix.lower() not in (".mid", ".midi"):
+        raise HTTPException(400, "MIDI file must use .mid or .midi")
+    target = INBOX / f"midi-{uuid.uuid4().hex}_{safe}"
+    target.write_bytes(await file.read())
+    try:
+        result = parse_midi(target)
+    except (ValueError, OSError) as error:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    return {"file": safe, "status": "parsed_no_synthesis", **result}
 @app.get("/api/capabilities")
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
