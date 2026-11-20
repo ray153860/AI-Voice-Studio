@@ -322,6 +322,12 @@ async def cover_workflow(
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
         source.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
+    conversion_parameters = {
+        "model_path": model["path"],
+        "index_path": index_path,
+        "pitch": pitch,
+        "f0_method": f0_method,
+    }
     jobs[jid] = {
         "id": jid,
         "type": "cover_workflow",
@@ -329,15 +335,17 @@ async def cover_workflow(
         "input": safe,
         "model_id": model_id,
         "metadata": metadata,
+        "retry": {
+            "source": str(source),
+            "conversion_parameters": conversion_parameters,
+            "vocal_gain_db": vocal_gain_db,
+            "accompaniment_gain_db": accompaniment_gain_db,
+            "chunk_seconds": chunk_seconds,
+            "overlap_seconds": overlap_seconds,
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
-    conversion_parameters = {
-        "model_path": model["path"],
-        "index_path": index_path,
-        "pitch": pitch,
-        "f0_method": f0_method,
-    }
     bg.add_task(
         run_cover_job,
         jid,
@@ -862,6 +870,46 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "cover_workflow":
+        demucs_executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
+        applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+        applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+        if not demucs_executable or not applio_root or not applio_python:
+            raise HTTPException(503, "Demucs and Applio engine environments must both be configured")
+        retry = job.get("retry") or {}
+        source = Path(retry.get("source", ""))
+        parameters = retry.get("conversion_parameters") or {}
+        if not source.is_file():
+            raise HTTPException(404, "original song audio is missing")
+        if not Path(parameters.get("model_path", "")).is_file():
+            raise HTTPException(404, "registered RVC model file is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "cover_workflow",
+            "status": "queued",
+            "input": job["input"],
+            "model_id": job.get("model_id", ""),
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        bg.add_task(
+            run_cover_job,
+            new_id,
+            source,
+            demucs_executable,
+            Path(applio_root),
+            applio_python,
+            parameters,
+            retry.get("vocal_gain_db", 0),
+            retry.get("accompaniment_gain_db", 0),
+            retry.get("chunk_seconds", 0),
+            retry.get("overlap_seconds", 1),
+        )
+        return jobs[new_id]
     if job.get("type") == "singing_synthesis":
         diffsinger_root = os.environ.get("DIFFSINGER_ROOT", "").strip()
         diffsinger_python = os.environ.get("DIFFSINGER_PYTHON", "").strip()

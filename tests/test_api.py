@@ -585,3 +585,10 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert job["result"]["engines"] == {"separation": "simulated-demucs", "voice_conversion": "simulated-applio"}
     assert job["result"]["chunking"]["chunk_count"] == 3
     assert client.get(job["output"]).status_code == 200
+
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["stages"][-1] == "mix"

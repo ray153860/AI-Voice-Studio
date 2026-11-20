@@ -4,6 +4,7 @@
 
 - Initial local workflow UI, WAV validation and normalization workflow, persistent job tracking, retry/cancellation, model registry and engine adapter contracts.
 - Added persisted GPT-SoVITS, RVC, Demucs and DiffSinger request metadata, inference task retry, and task controls in the unified UI.
+- Added persisted AI cover workflow parameters and end-to-end preset retry.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
 - Added real WAV mixing, MIDI inspection, objective audio quality analysis, and Linux/Windows CI.
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.
