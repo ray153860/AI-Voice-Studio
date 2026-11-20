@@ -9,6 +9,7 @@ dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "numpy>=1.26", "sou
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
 build = ["pyinstaller>=6.11"]
+security = ["bandit>=1.8", "pip-audit>=2.9"]
 [project.scripts]
 ai-voice-studio = "voice_studio.launcher:main"
 [tool.setuptools.packages.find]

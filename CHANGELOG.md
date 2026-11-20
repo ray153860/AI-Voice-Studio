@@ -13,3 +13,4 @@
 - Replaced the deprecated Starlette TestClient fallback with direct HTTPX ASGI transport and made CI fail on warnings.
 - Added a Windows PyInstaller one-folder build, packaged API smoke test, and unsigned artifact upload workflow.
 - Added resolved direct-dependency license reports to CI and Windows artifacts, with explicit separation from model and dataset rights.
+- Added blocking Bandit and pip-audit checks with retained JSON security reports.

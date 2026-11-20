@@ -1,0 +1,42 @@
+name: Security
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'pyproject.toml'
+      - '.github/workflows/security.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[security]'
+      - id: bandit
+        name: Bandit source scan
+        continue-on-error: true
+        run: bandit -r src -f json -o bandit.json
+      - id: audit
+        name: Python dependency audit
+        continue-on-error: true
+        run: pip-audit --local --format json --output pip-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit.json
+            pip-audit.json
+          if-no-files-found: error
+      - name: Enforce scan results
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.bandit.outcome }}" = "success"
+          test "${{ steps.audit.outcome }}" = "success"

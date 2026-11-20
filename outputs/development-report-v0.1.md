@@ -24,6 +24,7 @@
 - Ubuntu/Windows GitHub Actions 测试配置。
 - Windows PyInstaller one-folder 构建、打包后 API 冒烟测试和未签名构建产物上传工作流；首次远端构建、启动与上传均已成功。
 - 直接 Python 运行依赖许可证清单与自动 JSON 导出；CI 和 Windows 构建保存实际解析版本，同时明确不覆盖传递依赖、外部 AI 引擎、模型、声库和数据授权。
+- Bandit 源码扫描与 pip-audit 依赖审计工作流；两者输出 JSON 附件，发现项会阻断流程。首次远端结果仍待验证。
 
 ## 验证状态
 
