@@ -17,7 +17,7 @@ AI Voice Studio 聚焦于把独立音频引擎组织成可复现的项目、任�
 |---|---|---|
 | TTS | GPT-SoVITS | MIT 源码仓库；已按 API v2 `/tts` POST 契约实现 HTTP 适配器。当前只通过模拟 HTTP 响应验证契约，未运行真实模型。具体版本、语言模型和权重仍逐项登记授权；CPU 性能与显存取决于模型和版本。 |
 | RVC | Applio | 仓库 MIT；已按官方 `core.py infer` CLI 实现独立进程适配器和统一任务入口。当前只通过模拟进程验证命令和输出，未运行真实模型；发布前仍需钉住可复现版本。 |
-| 分离 | Demucs | MIT，但 facebookresearch 仓库已归档；可作为首个可选本地分离器，需评估维护分支和模型权重来源。UVR 是桌面集成参考，不直接复刻其 UI。 |
+| 分离 | Demucs | 采用 adefossez 维护仓库的 CLI 契约；源码 MIT，但官方 README 明确说明预训练权重许可不清晰。本项目只提供独立 CLI 适配器，不打包或再分发权重。UVR 是桌面集成参考，不直接复刻其 UI。 |
 | 歌声合成 | OpenVPI DiffSinger | Apache-2.0 源码，模型、声库各自授权。功能适配强，推理依赖与数据准备成本高；先定义标准歌词/音符协议，再做独立适配器。 |
 | 歌声合成 | NNSVS | MIT，研究工具链，训练/配置和声库准备成本较高；作为替代引擎，不作为首发集成。 |
 | 歌声工作台 | OpenUtau | MIT，成熟桌面编辑器和插件生态；项目定位不同，更适合作为兼容/互操作参考，非本软件内嵌 UI。 |
@@ -34,6 +34,8 @@ AI Voice Studio 聚焦于把独立音频引擎组织成可复现的项目、任�
 GPT-SoVITS 适配器通过 `GPT_SOVITS_URL` 配置服务地址。当前 API v2 接受服务器可访问的 `ref_audio_path`，因此本机进程可直接使用工作区路径；远程或容器服务必须显式共享参考音频目录。该限制未满足时不能宣称远程部署可用。
 
 Applio 适配器通过 `APPLIO_ROOT` 和 `APPLIO_PYTHON` 指向独立引擎目录及其 Python。主应用以参数列表调用 `core.py infer`，不使用 shell，也不导入 Applio 的 PyTorch/CUDA 模块。模型必须先登记，并保留来源与许可信息。
+
+Demucs 适配器通过 `DEMUCS_EXECUTABLE` 指向独立环境的命令入口，以 `--two-stems=vocals` 生成 vocals/no_vocals。主应用验证两个 WAV 后分别登记输出。混合阶段由本项目实现，负责长度补齐、独立增益和峰值防削波。
 
 ## 许可规则
 

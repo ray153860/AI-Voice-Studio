@@ -210,3 +210,82 @@ def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch)
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["result"]["engine"] == "simulated-applio"
+
+
+def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    inbox.mkdir()
+    outputs.mkdir()
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    app_module.jobs.clear()
+
+    class FakeAdapter:
+        def __init__(self, executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            vocals = self.output_dir / "vocals.wav"
+            accompaniment = self.output_dir / "accompaniment.wav"
+            sf.write(vocals, np.zeros(4410, dtype="float32"), 44100)
+            sf.write(accompaniment, np.zeros(4410, dtype="float32"), 44100)
+            return EngineResult(
+                str(vocals),
+                44100,
+                "simulated-demucs",
+                {"duration": 0.1},
+                {"vocals": str(vocals), "accompaniment": str(accompaniment)},
+            )
+
+    monkeypatch.setattr(app_module, "DemucsAdapter", FakeAdapter)
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(4410, dtype="float32"), 44100, format="WAV")
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/separate",
+        data={"model": "htdemucs"},
+        files={"input_audio": ("song.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert set(job["artifacts"]) == {"vocals", "accompaniment"}
+    assert all(client.get(url).status_code == 200 for url in job["artifacts"].values())
+
+
+def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    inbox.mkdir()
+    outputs.mkdir()
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    app_module.jobs.clear()
+    vocals = io.BytesIO()
+    accompaniment = io.BytesIO()
+    sf.write(vocals, np.ones(8000, dtype="float32") * 0.6, 8000, format="WAV")
+    sf.write(accompaniment, np.ones(4000, dtype="float32") * 0.6, 8000, format="WAV")
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/mix",
+        data={"vocal_gain_db": "-3", "accompaniment_gain_db": "0"},
+        files={
+            "vocals": ("vocals.wav", vocals.getvalue(), "audio/wav"),
+            "accompaniment": ("accompaniment.wav", accompaniment.getvalue(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["duration"] == 1.0
+    assert client.get(job["output"]).status_code == 200

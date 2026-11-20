@@ -13,6 +13,8 @@
 - TTS、音色转换、人声分离和唱声合成的统一引擎请求/结果协议。
 - GPT-SoVITS API v2 `/tts` HTTP 适配器与统一 TTS 任务入口；需要外部服务和合法模型。
 - Applio `core.py infer` 外部进程适配器与统一 RVC 任务入口；需要独立 Applio 环境和合法 RVC 模型。
+- Demucs 两轨分离适配器；代码接口已完成，权重不随项目分发。
+- 真实 WAV 人声/伴奏混合：长度对齐、独立增益和峰值防削波。
 - Ubuntu/Windows GitHub Actions 测试配置。
 
 ## 验证状态
@@ -20,7 +22,7 @@
 - 真实音频处理：已验证。测试生成 WAV，经处理后可解码、采样率和长度保持正确。
 - 服务启动：已验证。Uvicorn 启动成功，首页与能力 API 返回 HTTP 200。
 - API 集成：已验证项目、上传、任务、输出、重试、取消、模型登记和错误输入。
-- 自动测试：17 项通过。
+- 自动测试：22 项通过。
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - Windows GitHub Actions：已配置，尚未在远端运行。
@@ -36,7 +38,7 @@
 
 ## 尚未完成
 
-- GPT-SoVITS 与 Applio RVC 的真实模型推理验证，以及分离和 DiffSinger 适配器。
+- GPT-SoVITS、Applio RVC 和 Demucs 的真实模型推理验证，以及 DiffSinger 适配器。
 - 训练进程、进度解析、取消和训练产物登记。
 - MIDI/歌词/音素对齐与原创唱声生成。
 - GPU 验证、主观试听、音质对比和 Windows 原生打包。

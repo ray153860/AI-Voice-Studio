@@ -17,6 +17,7 @@ class EngineResult:
     sample_rate: int
     engine: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: dict[str, str] = field(default_factory=dict)
 
 
 class Engine(Protocol):

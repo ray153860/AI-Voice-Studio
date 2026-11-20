@@ -9,8 +9,9 @@ from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .adapters.applio import ApplioAdapter
+from .adapters.demucs import DemucsAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
-from .audio import inspect_audio, process_audio
+from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest
 from .models import sha256_file, validate_model_filename
 from .store import Store
@@ -41,11 +42,12 @@ async def list_jobs(): return store.list_jobs()
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
     rvc_status = "configured_unverified" if os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON") else "interface_only_dependencies_missing"
+    separation_status = "configured_unverified" if os.environ.get("DEMUCS_EXECUTABLE") else "interface_only_dependencies_missing"
     return {
         "audio_processing": "verified_real_processing",
         "tts": tts_status,
         "voice_conversion": rvc_status,
-        "vocal_separation": "interface_only_dependencies_missing",
+        "vocal_separation": separation_status,
         "singing_synthesis": "interface_only_dependencies_missing",
         "model_training": "not_developed",
     }
@@ -54,6 +56,7 @@ async def engines():
     return [
         {"id": "gpt-sovits", "capability": "tts", "configured": bool(os.environ.get("GPT_SOVITS_URL")), "verification": "not_run"},
         {"id": "applio", "capability": "voice_conversion", "configured": bool(os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON")), "verification": "not_run"},
+        {"id": "demucs", "capability": "vocal_separation", "configured": bool(os.environ.get("DEMUCS_EXECUTABLE")), "verification": "not_run"},
     ]
 @app.get("/api/models")
 async def list_models(): return store.list_models()
@@ -108,6 +111,129 @@ async def workflow(file: UploadFile, bg: BackgroundTasks):
     store.save_job(jobs[jid])
     bg.add_task(run_job,jid,src)
     return jobs[jid]
+@app.post("/api/workflow/mix")
+async def mix_workflow(
+    bg: BackgroundTasks,
+    vocals: UploadFile,
+    accompaniment: UploadFile,
+    vocal_gain_db: float = Form(default=0),
+    accompaniment_gain_db: float = Form(default=0),
+):
+    jid = uuid.uuid4().hex
+    vocals_path = INBOX / f"{jid}_vocals_{Path(vocals.filename or 'vocals.wav').name}"
+    accompaniment_path = INBOX / f"{jid}_accompaniment_{Path(accompaniment.filename or 'accompaniment.wav').name}"
+    vocals_path.write_bytes(await vocals.read())
+    accompaniment_path.write_bytes(await accompaniment.read())
+    try:
+        vocals_metadata = inspect_audio(vocals_path)
+        accompaniment_metadata = inspect_audio(accompaniment_path)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        vocals_path.unlink(missing_ok=True)
+        accompaniment_path.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    jobs[jid] = {
+        "id": jid,
+        "type": "audio_mix",
+        "status": "queued",
+        "input": [vocals.filename, accompaniment.filename],
+        "metadata": {"vocals": vocals_metadata, "accompaniment": accompaniment_metadata},
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    bg.add_task(
+        run_mix_job,
+        jid,
+        vocals_path,
+        accompaniment_path,
+        vocal_gain_db,
+        accompaniment_gain_db,
+    )
+    return jobs[jid]
+
+
+async def run_mix_job(jid, vocals_path, accompaniment_path, vocal_gain_db, accompaniment_gain_db):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("mixing vocal and accompaniment WAV files")
+    store.save_job(job)
+    try:
+        output = OUT / f"mix-{jid}.wav"
+        result = await asyncio.to_thread(
+            mix_audio,
+            vocals_path,
+            accompaniment_path,
+            output,
+            vocal_gain_db,
+            accompaniment_gain_db,
+        )
+        job.update(status="completed", output=f"/api/outputs/{output.name}", result=result)
+        job["log"].append("aligned, mixed and exported WAV")
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
+@app.post("/api/workflow/separate")
+async def separation_workflow(
+    bg: BackgroundTasks,
+    input_audio: UploadFile,
+    model: str = Form(default="htdemucs"),
+    device: str = Form(default=""),
+):
+    executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
+    if not executable:
+        raise HTTPException(503, "Demucs engine executable is not configured")
+    jid = uuid.uuid4().hex
+    safe = Path(input_audio.filename or "song.wav").name
+    source = INBOX / f"{jid}_{safe}"
+    source.write_bytes(await input_audio.read())
+    try:
+        metadata = inspect_audio(source)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        source.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    jobs[jid] = {
+        "id": jid,
+        "type": "vocal_separation",
+        "status": "queued",
+        "input": safe,
+        "metadata": metadata,
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    request = EngineRequest(input_audio=str(source), parameters={"model": model, "device": device})
+    bg.add_task(run_separation_job, jid, executable, request)
+    return jobs[jid]
+
+
+async def run_separation_job(jid, executable, request):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("submitted to Demucs CLI")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result = await DemucsAdapter(executable, OUT).run(request)
+        if cancel_flags.get(jid):
+            for path in result.artifacts.values():
+                Path(path).unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        artifacts = {name: f"/api/outputs/{Path(path).name}" for name, path in result.artifacts.items()}
+        job.update(
+            status="completed",
+            output=artifacts["vocals"],
+            artifacts=artifacts,
+            result={"sample_rate": result.sample_rate, "engine": result.engine, **result.metadata},
+        )
+        job["log"].append("received and validated vocal/accompaniment WAV stems")
+    except (RuntimeError, ValueError, OSError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
 @app.post("/api/workflow/voice-conversion")
 async def voice_conversion_workflow(
     bg: BackgroundTasks,
