@@ -1,17 +1,37 @@
+import asyncio
 import io
 import struct
 from pathlib import Path
 
+import httpx
 import numpy as np
 import soundfile as sf
-from fastapi.testclient import TestClient
 
 from voice_studio import app as app_module
 from voice_studio.engines import EngineResult, TrainingResult
 
 
+class ApiClient:
+    def __init__(self, application):
+        self.application = application
+
+    def request(self, method, url, **kwargs):
+        async def send():
+            transport = httpx.ASGITransport(app=self.application)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                return await client.request(method, url, **kwargs)
+
+        return asyncio.run(send())
+
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+
 def test_home_exposes_diffsinger_submission_controls():
-    response = TestClient(app_module.app).get("/")
+    response = ApiClient(app_module.app).get("/")
 
     assert response.status_code == 200
     assert 'id="singingDs"' in response.text
@@ -30,7 +50,7 @@ def test_home_exposes_diffsinger_submission_controls():
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
     monkeypatch.delenv("APPLIO_ROOT", raising=False)
     monkeypatch.delenv("APPLIO_PYTHON", raising=False)
-    capabilities = TestClient(app_module.app).get("/api/capabilities").json()
+    capabilities = ApiClient(app_module.app).get("/api/capabilities").json()
 
     assert capabilities["model_training"] == "interface_only_dependencies_missing"
 
@@ -47,7 +67,7 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
     app_module.jobs.clear()
 
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     created = client.post("/api/projects", json={"name": "Demo"})
     assert created.status_code == 200
     assert client.get("/api/projects").json()[0]["name"] == "Demo"
@@ -83,7 +103,7 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
 
 def test_invalid_audio_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     assert client.post("/api/workflow/audio", files={"file": ("bad.wav", b"not audio")}).status_code == 400
 
 
@@ -98,7 +118,7 @@ def test_cancel_queued_job(tmp_path, monkeypatch):
     app_module.jobs[job["id"]] = job
     store.save_job(job)
 
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post("/api/jobs/queued-job/cancel")
     assert response.status_code == 200
     assert app_module.cancel_flags["queued-job"] is True
@@ -112,7 +132,7 @@ def test_model_import_validation(tmp_path, monkeypatch):
     models.mkdir()
     monkeypatch.setattr(app_module, "MODELS", models)
     monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
 
     wrong_extension = client.post(
         "/api/models",
@@ -131,7 +151,7 @@ def test_model_import_validation(tmp_path, monkeypatch):
 def test_tts_requires_configured_engine(tmp_path, monkeypatch):
     monkeypatch.delenv("GPT_SOVITS_URL", raising=False)
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/tts",
         data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh"},
@@ -165,7 +185,7 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "GptSovitsAdapter", FakeAdapter)
     reference = io.BytesIO()
     sf.write(reference, np.zeros(8000, dtype="float32"), 16000, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/tts",
         data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh"},
@@ -182,7 +202,7 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
 def test_voice_conversion_requires_configured_engine(tmp_path, monkeypatch):
     monkeypatch.delenv("APPLIO_ROOT", raising=False)
     monkeypatch.delenv("APPLIO_PYTHON", raising=False)
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/voice-conversion",
         data={"model_id": "missing"},
@@ -226,7 +246,7 @@ def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch)
     monkeypatch.setattr(app_module, "ApplioAdapter", FakeAdapter)
     audio = io.BytesIO()
     sf.write(audio, np.zeros(1600, dtype="float32"), 16000, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/voice-conversion",
         data={"model_id": "voice-model", "pitch": "2", "f0_method": "rmvpe"},
@@ -272,7 +292,7 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "DemucsAdapter", FakeAdapter)
     audio = io.BytesIO()
     sf.write(audio, np.zeros(4410, dtype="float32"), 44100, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/separate",
         data={"model": "htdemucs"},
@@ -301,7 +321,7 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     accompaniment = io.BytesIO()
     sf.write(vocals, np.ones(8000, dtype="float32") * 0.6, 8000, format="WAV")
     sf.write(accompaniment, np.ones(4000, dtype="float32") * 0.6, 8000, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/mix",
         data={"vocal_gain_db": "-3", "accompaniment_gain_db": "0"},
@@ -328,7 +348,7 @@ def test_midi_inspection_api(tmp_path, monkeypatch):
         + struct.pack(">I", len(events))
         + events
     )
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post("/api/midi/inspect", files={"file": ("melody.mid", midi, "audio/midi")})
 
     assert response.status_code == 200
@@ -364,7 +384,7 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
             return EngineResult(str(target), 44100, "simulated-diffsinger", {"duration": 0.1})
 
     monkeypatch.setattr(app_module, "DiffSingerAdapter", FakeAdapter, raising=False)
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/singing",
         data={"experiment": "licensed-singer", "speaker": "singer-a", "key": "1"},
@@ -395,7 +415,7 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     app_module.jobs.clear()
     tone = io.BytesIO()
     sf.write(tone, np.zeros(1600, dtype="float32"), 16000, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     imported = client.post(
         "/api/datasets",
         data={"name": "Authorized clips", "license_name": "owned-recordings"},
@@ -494,7 +514,7 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "ApplioAdapter", FakeConverter)
     song = io.BytesIO()
     sf.write(song, np.zeros(8000, dtype="float32"), 8000, format="WAV")
-    client = TestClient(app_module.app)
+    client = ApiClient(app_module.app)
     started = client.post(
         "/api/workflow/cover",
         data={"model_id": "cover-voice", "pitch": "2", "chunk_seconds": "0.5", "overlap_seconds": "0.1"},

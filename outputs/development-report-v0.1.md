@@ -28,7 +28,7 @@
 - 真实音频处理：已验证。测试生成 WAV，经处理后可解码、采样率和长度保持正确。
 - 服务启动：已验证。Uvicorn 启动成功，首页与能力 API 返回 HTTP 200。
 - API 集成：已验证项目、上传、任务、输出、重试、取消、模型登记和错误输入。
-- 自动测试：41 项通过。
+- 自动测试：41 项通过，并在 `-W error` 模式下无警告。
 - 静态检查：Ruff 通过；`git diff --check` 通过。
 - 真实 AI 推理：未验证，也未标记为完成。
 - GitHub Actions：Ubuntu 与 Windows 两个任务均已远端运行并成功。
@@ -53,7 +53,6 @@
 
 ## 已知问题
 
-- 测试出现 Starlette 对当前 TestClient/httpx 组合的弃用警告，不影响现有测试结果。
 - 当前取消属于协作式取消；短任务可能在取消请求到达前完成。
 - 模型登记只验证元数据和文件扩展名，状态固定为 `registered_unverified`，不会声称模型可推理。
 - 早期运行曾在 `C:\Users\hp\.ai-voice-studio` 创建项目 SQLite 和空数据目录；代码已改为项目内 `work/runtime`。自动删除该旧目录被执行环境的删除保护拒绝。
@@ -62,4 +61,4 @@
 
 已核验账户内不存在同名仓库，并创建公开独立仓库：<https://github.com/ray153860/AI-Voice-Studio>。
 
-本地完整提交历史已推送到 `main`。翻唱预设提交 `b2e5a47` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44683937232>。后续分块优化提交仍须以推送后的独立 CI 结果为准。
+本地完整提交历史已推送到 `main`。分块优化提交 `1d80e34` 已在 Ubuntu 与 Windows 作业中全部成功：<https://github.com/ray153860/AI-Voice-Studio/actions/runs/44721513939>。后续测试基础设施提交仍须以推送后的独立 CI 结果为准。

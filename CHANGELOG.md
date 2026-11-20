@@ -10,3 +10,4 @@
 - Added lightweight monophonic pitch-range screening for objective singing and conversion checks.
 - Added the preset cover workflow: separation, RVC conversion, objective before/after comparison, and accompaniment mix.
 - Added optional overlap-add chunked conversion for long vocals with exact length and boundary-step checks.
+- Replaced the deprecated Starlette TestClient fallback with direct HTTPX ASGI transport and made CI fail on warnings.
