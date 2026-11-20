@@ -26,6 +26,39 @@ jobs:
         name: Python dependency audit
         continue-on-error: true
         run: pip-audit --local --format json --output pip-audit.json
+      - name: Summarize security findings
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for report in ("bandit.json", "pip-audit.json"):
+              path = Path(report)
+              if not path.exists():
+                  print(f"{report}: report was not created")
+                  continue
+              data = json.loads(path.read_text(encoding="utf-8"))
+              if report == "bandit.json":
+                  findings = data.get("results", [])
+                  print(f"{report}: {len(findings)} finding(s)")
+                  for finding in findings:
+                      print(
+                          finding.get("filename"),
+                          finding.get("line_number"),
+                          finding.get("test_id"),
+                          finding.get("issue_text"),
+                      )
+              else:
+                  findings = [
+                      (dependency.get("name"), vulnerability.get("id"))
+                      for dependency in data.get("dependencies", [])
+                      for vulnerability in dependency.get("vulns", [])
+                  ]
+                  print(f"{report}: {len(findings)} finding(s)")
+                  for finding in findings:
+                      print(*finding)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
