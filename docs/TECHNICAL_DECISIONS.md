@@ -39,6 +39,8 @@ Applio 训练适配器依次调用官方 `preprocess`、`extract`、`train`、`i
 
 Demucs 适配器通过 `DEMUCS_EXECUTABLE` 指向独立环境的命令入口，以 `--two-stems=vocals` 生成 vocals/no_vocals。主应用验证两个 WAV 后分别登记输出。混合阶段由本项目实现，负责长度补齐、独立增益和峰值防削波。
 
+翻唱工作流可选择本项目的重叠分块层：按固定时长切分人声，逐块调用 RVC，再用线性权重重叠相加还原精确帧数，并报告拼接位置的最大采样跳变。该层用于研究断音和边界不连续，不保证主观听感改善；真实 Applio 输出的长度稳定性仍待验证。
+
 DiffSinger 适配器通过 `DIFFSINGER_ROOT` 和 `DIFFSINGER_PYTHON` 指向独立引擎目录及其 Python。任务输入是官方 JSON `.ds` 格式和已存在于该引擎环境中的实验/模型名称；主应用验证生成 WAV，但不捆绑检查点、声库或 vocoder。当前接口只通过模拟外部进程验证。
 
 ## 许可规则

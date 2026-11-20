@@ -273,6 +273,8 @@ async def cover_workflow(
     f0_method: str = Form(default="rmvpe"),
     vocal_gain_db: float = Form(default=0),
     accompaniment_gain_db: float = Form(default=0),
+    chunk_seconds: float = Form(default=0),
+    overlap_seconds: float = Form(default=1),
 ):
     demucs_executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
     applio_root = os.environ.get("APPLIO_ROOT", "").strip()
@@ -323,6 +325,8 @@ async def cover_workflow(
         conversion_parameters,
         vocal_gain_db,
         accompaniment_gain_db,
+        chunk_seconds,
+        overlap_seconds,
     )
     return jobs[jid]
 
@@ -336,6 +340,8 @@ async def run_cover_job(
     conversion_parameters,
     vocal_gain_db,
     accompaniment_gain_db,
+    chunk_seconds,
+    overlap_seconds,
 ):
     job = jobs[jid]
     job["status"] = "running"
@@ -355,6 +361,9 @@ async def run_cover_job(
             conversion_parameters,
             vocal_gain_db=vocal_gain_db,
             accompaniment_gain_db=accompaniment_gain_db,
+            chunk_seconds=chunk_seconds,
+            overlap_seconds=overlap_seconds,
+            workspace=OUT / f"cover-chunks-{jid}",
         )
         if cancel_flags.get(jid):
             output.unlink(missing_ok=True)

@@ -22,6 +22,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "提交 RVC 训练任务" in response.text
     assert 'id="coverSong"' in response.text
     assert 'id="coverModel"' in response.text
+    assert 'id="coverChunk"' in response.text
+    assert 'id="coverOverlap"' in response.text
     assert "运行翻唱预设工作流" in response.text
 
 
@@ -478,11 +480,14 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     class FakeConverter:
         def __init__(self, applio_root, python_executable, output_dir):
             self.output_dir = output_dir
+            self.calls = 0
 
         async def run(self, request):
             assert request.parameters["model_path"] == str(model_path)
-            converted = self.output_dir / "cover-converted.wav"
-            sf.write(converted, np.sin(np.arange(8000) * 0.1) * 0.25, 8000)
+            self.calls += 1
+            chunk, sample_rate = sf.read(request.input_audio, dtype="float32")
+            converted = self.output_dir / f"cover-converted-{self.calls}.wav"
+            sf.write(converted, chunk * 1.1, sample_rate)
             return EngineResult(str(converted), 8000, "simulated-applio")
 
     monkeypatch.setattr(app_module, "DemucsAdapter", FakeSeparator)
@@ -492,7 +497,7 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     client = TestClient(app_module.app)
     started = client.post(
         "/api/workflow/cover",
-        data={"model_id": "cover-voice", "pitch": "2"},
+        data={"model_id": "cover-voice", "pitch": "2", "chunk_seconds": "0.5", "overlap_seconds": "0.1"},
         files={"song": ("song.wav", song.getvalue(), "audio/wav")},
     )
 
@@ -501,4 +506,5 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert job["status"] == "completed"
     assert job["result"]["stages"] == ["separation", "voice_conversion", "quality_comparison", "mix"]
     assert job["result"]["engines"] == {"separation": "simulated-demucs", "voice_conversion": "simulated-applio"}
+    assert job["result"]["chunking"]["chunk_count"] == 3
     assert client.get(job["output"]).status_code == 200
