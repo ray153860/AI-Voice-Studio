@@ -3,11 +3,14 @@ import os
 import uuid
 from pathlib import Path
 
+import httpx
 import soundfile as sf
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
+from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, process_audio
+from .engines import EngineRequest
 from .models import sha256_file, validate_model_filename
 from .store import Store
 from .ui import PAGE
@@ -35,14 +38,18 @@ async def create_project(payload: dict):
 async def list_jobs(): return store.list_jobs()
 @app.get("/api/capabilities")
 async def capabilities():
+    tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
     return {
         "audio_processing": "verified_real_processing",
-        "tts": "interface_only_dependencies_missing",
+        "tts": tts_status,
         "voice_conversion": "interface_only_dependencies_missing",
         "vocal_separation": "interface_only_dependencies_missing",
         "singing_synthesis": "interface_only_dependencies_missing",
         "model_training": "not_developed",
     }
+@app.get("/api/engines")
+async def engines():
+    return [{"id": "gpt-sovits", "capability": "tts", "configured": bool(os.environ.get("GPT_SOVITS_URL")), "verification": "not_run"}]
 @app.get("/api/models")
 async def list_models(): return store.list_models()
 @app.post("/api/models")
@@ -91,10 +98,78 @@ async def workflow(file: UploadFile, bg: BackgroundTasks):
     src.write_bytes(await file.read())
     try: meta=inspect_audio(src)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as e: src.unlink(missing_ok=True); raise HTTPException(400,str(e)) from e
-    jobs[jid]={"id":jid,"status":"queued","input":safe,"metadata":meta,"log":[]}
+    jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"metadata":meta,"log":[]}
     store.save_job(jobs[jid])
     bg.add_task(run_job,jid,src)
     return jobs[jid]
+@app.post("/api/workflow/tts")
+async def tts_workflow(
+    bg: BackgroundTasks,
+    reference_audio: UploadFile,
+    text: str = Form(),
+    text_lang: str = Form(default="zh"),
+    prompt_lang: str = Form(default="zh"),
+    prompt_text: str = Form(default=""),
+):
+    engine_url = os.environ.get("GPT_SOVITS_URL", "").strip()
+    if not engine_url:
+        raise HTTPException(503, "GPT-SoVITS engine URL is not configured")
+    if not text.strip():
+        raise HTTPException(400, "text is required")
+    jid = uuid.uuid4().hex
+    safe = Path(reference_audio.filename or "reference.wav").name
+    source = INBOX / f"{jid}_{safe}"
+    source.write_bytes(await reference_audio.read())
+    try:
+        metadata = inspect_audio(source)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        source.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    jobs[jid] = {
+        "id": jid,
+        "type": "tts",
+        "status": "queued",
+        "input": safe,
+        "metadata": metadata,
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    request = EngineRequest(
+        text=text.strip(),
+        reference_audio=str(source),
+        parameters={"text_lang": text_lang, "prompt_lang": prompt_lang, "prompt_text": prompt_text},
+    )
+    bg.add_task(run_tts_job, jid, engine_url, request)
+    return jobs[jid]
+
+
+async def run_tts_job(jid, engine_url, request):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("submitted to GPT-SoVITS API v2")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result = await GptSovitsAdapter(engine_url, OUT).run(request)
+        output = Path(result.output_audio)
+        if cancel_flags.get(jid):
+            output.unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        job.update(
+            status="completed",
+            output=f"/api/outputs/{output.name}",
+            result={"sample_rate": result.sample_rate, "engine": result.engine, **result.metadata},
+        )
+        job["log"].append("received and validated WAV output")
+    except (RuntimeError, ValueError, OSError, httpx.HTTPError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
 async def run_job(jid,src):
     job=jobs[jid]; job["status"]="running"; job["log"].append("validated input")
     store.save_job(job)
@@ -128,12 +203,14 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type", "audio_processing") != "audio_processing":
+        raise HTTPException(409, "retry is not implemented for this job type")
     old=INBOX/f"{jid}_{Path(job['input']).name}"
     if not old.is_file(): raise HTTPException(404,"original input file is missing")
     new_id=uuid.uuid4().hex
     retry_input=INBOX/f"{new_id}_{Path(job['input']).name}"
     retry_input.write_bytes(old.read_bytes())
-    jobs[new_id]={"id":new_id,"status":"queued","input":job["input"],"metadata":job["metadata"],"log":[f"retried from {jid}"]}
+    jobs[new_id]={"id":new_id,"type":"audio_processing","status":"queued","input":job["input"],"metadata":job["metadata"],"log":[f"retried from {jid}"]}
     cancel_flags.pop(new_id,None)
     store.save_job(jobs[new_id])
     bg.add_task(run_job,new_id,retry_input)

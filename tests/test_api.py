@@ -5,6 +5,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from voice_studio import app as app_module
+from voice_studio.engines import EngineResult
 
 
 def test_project_and_audio_job(tmp_path, monkeypatch):
@@ -98,3 +99,54 @@ def test_model_import_validation(tmp_path, monkeypatch):
         files={"file": ("voice.pth", b"data")},
     )
     assert missing_license.status_code == 400
+
+
+def test_tts_requires_configured_engine(tmp_path, monkeypatch):
+    monkeypatch.delenv("GPT_SOVITS_URL", raising=False)
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/tts",
+        data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh"},
+        files={"reference_audio": ("reference.wav", b"not read because engine is unavailable")},
+    )
+    assert response.status_code == 503
+    assert client.get("/api/engines").json()[0]["configured"] is False
+
+
+def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    inbox.mkdir()
+    outputs.mkdir()
+    monkeypatch.setenv("GPT_SOVITS_URL", "http://engine.test:9880")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", __import__("voice_studio.store", fromlist=["Store"]).Store(tmp_path / "studio.sqlite3"))
+    app_module.jobs.clear()
+    app_module.cancel_flags.clear()
+
+    class FakeAdapter:
+        def __init__(self, base_url, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            target = self.output_dir / "simulated.wav"
+            sf.write(target, np.zeros(2400, dtype="float32"), 24000)
+            return EngineResult(str(target), 24000, "simulated-gpt-sovits", {"duration": 0.1})
+
+    monkeypatch.setattr(app_module, "GptSovitsAdapter", FakeAdapter)
+    reference = io.BytesIO()
+    sf.write(reference, np.zeros(8000, dtype="float32"), 16000, format="WAV")
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/tts",
+        data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh"},
+        files={"reference_audio": ("reference.wav", reference.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["engine"] == "simulated-gpt-sovits"
+    assert client.get(job["output"]).status_code == 200
