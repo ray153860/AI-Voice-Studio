@@ -19,6 +19,12 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "提交 DiffSinger 任务" in response.text
 
 
+def test_capabilities_distinguish_training_adapter_from_task_workflow():
+    capabilities = TestClient(app_module.app).get("/api/capabilities").json()
+
+    assert capabilities["model_training"] == "adapter_contract_only_no_task_endpoint"
+
+
 def test_project_and_audio_job(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "ROOT", tmp_path)
     monkeypatch.setattr(app_module, "INBOX", tmp_path / "audio")

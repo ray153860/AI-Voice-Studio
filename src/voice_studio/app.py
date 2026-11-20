@@ -90,7 +90,7 @@ async def capabilities():
         "voice_conversion": rvc_status,
         "vocal_separation": separation_status,
         "singing_synthesis": singing_status,
-        "model_training": "not_developed",
+        "model_training": "adapter_contract_only_no_task_endpoint",
     }
 @app.get("/api/engines")
 async def engines():

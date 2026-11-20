@@ -20,6 +20,20 @@ class EngineResult:
     artifacts: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class TrainingRequest:
+    model_name: str
+    dataset_path: str
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TrainingResult:
+    engine: str
+    artifacts: dict[str, str]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class Engine(Protocol):
     name: str
     capability: str
