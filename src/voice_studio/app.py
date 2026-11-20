@@ -15,6 +15,7 @@ from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest
 from .midi import parse_midi
 from .models import sha256_file, validate_model_filename
+from .quality import analyze_audio, compare_audio
 from .store import Store
 from .ui import PAGE
 
@@ -52,6 +53,29 @@ async def inspect_midi(file: UploadFile):
         target.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     return {"file": safe, "status": "parsed_no_synthesis", **result}
+@app.post("/api/audio/analyze")
+async def audio_quality(file: UploadFile):
+    safe = Path(file.filename or "audio.wav").name
+    target = INBOX / f"analysis-{uuid.uuid4().hex}_{safe}"
+    target.write_bytes(await file.read())
+    try:
+        return {"file": safe, **analyze_audio(target)}
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+@app.post("/api/audio/compare")
+async def compare_audio_quality(before: UploadFile, after: UploadFile):
+    comparison_id = uuid.uuid4().hex
+    before_path = INBOX / f"comparison-{comparison_id}-before.wav"
+    after_path = INBOX / f"comparison-{comparison_id}-after.wav"
+    before_path.write_bytes(await before.read())
+    after_path.write_bytes(await after.read())
+    try:
+        return compare_audio(before_path, after_path)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        before_path.unlink(missing_ok=True)
+        after_path.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
 @app.get("/api/capabilities")
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
