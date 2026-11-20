@@ -427,6 +427,10 @@ async def separation_workflow(
         "status": "queued",
         "input": safe,
         "metadata": metadata,
+        "retry": {
+            "input_audio": str(source),
+            "parameters": {"model": model, "device": device},
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
@@ -848,6 +852,29 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "vocal_separation":
+        executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
+        if not executable:
+            raise HTTPException(503, "Demucs engine executable is not configured")
+        retry = job.get("retry") or {}
+        input_audio = Path(retry.get("input_audio", ""))
+        if not input_audio.is_file():
+            raise HTTPException(404, "original input audio is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "vocal_separation",
+            "status": "queued",
+            "input": job["input"],
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        request = EngineRequest(input_audio=str(input_audio), parameters=retry.get("parameters", {}))
+        bg.add_task(run_separation_job, new_id, executable, request)
+        return jobs[new_id]
     if job.get("type") == "voice_conversion":
         applio_root = os.environ.get("APPLIO_ROOT", "").strip()
         applio_python = os.environ.get("APPLIO_PYTHON", "").strip()

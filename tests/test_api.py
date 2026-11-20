@@ -324,6 +324,13 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert set(job["artifacts"]) == {"vocals", "accompaniment"}
     assert all(client.get(url).status_code == 200 for url in job["artifacts"].values())
 
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["engine"] == "simulated-demucs"
+
 
 def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     from voice_studio.store import Store
