@@ -27,6 +27,8 @@ from .workflows import run_cover_workflow
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
 INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
 MAX_AUDIO_UPLOAD_BYTES = 512 * 1024 * 1024
+MAX_DOCUMENT_UPLOAD_BYTES = 16 * 1024 * 1024
+MAX_MODEL_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 for p in (INBOX, OUT, MODELS, DATASETS): p.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="AI Voice Studio", version="0.1.0")
@@ -70,7 +72,7 @@ async def inspect_midi(file: UploadFile):
     if Path(safe).suffix.lower() not in (".mid", ".midi"):
         raise HTTPException(400, "MIDI file must use .mid or .midi")
     target = INBOX / f"midi-{uuid.uuid4().hex}_{safe}"
-    target.write_bytes(await file.read())
+    await save_upload_limited(file, target, MAX_DOCUMENT_UPLOAD_BYTES, "MIDI")
     try:
         result = parse_midi(target)
     except (ValueError, OSError) as error:
@@ -85,7 +87,7 @@ async def align_singing_score(midi_file: UploadFile, lyrics: str = Form()):
     if Path(safe).suffix.lower() not in (".mid", ".midi"):
         raise HTTPException(400, "MIDI file must use .mid or .midi")
     target = INBOX / f"singing-{uuid.uuid4().hex}_{safe}"
-    target.write_bytes(await midi_file.read())
+    await save_upload_limited(midi_file, target, MAX_DOCUMENT_UPLOAD_BYTES, "MIDI")
     try:
         parsed = parse_midi(target)
         score = align_lyrics_to_notes(parsed["notes"], lyrics)
@@ -104,7 +106,7 @@ async def align_singing_score(midi_file: UploadFile, lyrics: str = Form()):
 async def audio_quality(file: UploadFile):
     safe = Path(file.filename or "audio.wav").name
     target = INBOX / f"analysis-{uuid.uuid4().hex}_{safe}"
-    target.write_bytes(await file.read())
+    await save_upload_limited(file, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         return {"file": safe, **analyze_audio(target)}
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
@@ -115,8 +117,13 @@ async def compare_audio_quality(before: UploadFile, after: UploadFile):
     comparison_id = uuid.uuid4().hex
     before_path = INBOX / f"comparison-{comparison_id}-before.wav"
     after_path = INBOX / f"comparison-{comparison_id}-after.wav"
-    before_path.write_bytes(await before.read())
-    after_path.write_bytes(await after.read())
+    try:
+        await save_upload_limited(before, before_path, MAX_AUDIO_UPLOAD_BYTES, "audio")
+        await save_upload_limited(after, after_path, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    except HTTPException:
+        before_path.unlink(missing_ok=True)
+        after_path.unlink(missing_ok=True)
+        raise
     try:
         return compare_audio(before_path, after_path)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
@@ -172,9 +179,14 @@ async def import_dataset(files: list[UploadFile], name: str = Form(), license_na
         for index, upload in enumerate(files):
             safe = Path(upload.filename or f"audio-{index}.wav").name
             target = target_dir / f"{index:04d}_{safe}"
-            target.write_bytes(await upload.read())
+            await save_upload_limited(upload, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
             saved.append(target)
             metadata.append(inspect_audio(target))
+    except HTTPException:
+        for target in saved:
+            target.unlink(missing_ok=True)
+        target_dir.rmdir()
+        raise
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
         for target in saved:
             target.unlink(missing_ok=True)
@@ -210,11 +222,11 @@ async def import_model(
     target_dir = MODELS / model_id
     target_dir.mkdir(parents=True)
     target = target_dir / safe
-    size = 0
-    with target.open("wb") as handle:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            handle.write(chunk)
+    try:
+        size = await save_upload_limited(file, target, MAX_MODEL_UPLOAD_BYTES, "model")
+    except HTTPException:
+        target_dir.rmdir()
+        raise
     if size == 0:
         target.unlink(missing_ok=True)
         target_dir.rmdir()
@@ -255,8 +267,13 @@ async def mix_workflow(
     jid = uuid.uuid4().hex
     vocals_path = INBOX / f"{jid}_vocals_{Path(vocals.filename or 'vocals.wav').name}"
     accompaniment_path = INBOX / f"{jid}_accompaniment_{Path(accompaniment.filename or 'accompaniment.wav').name}"
-    vocals_path.write_bytes(await vocals.read())
-    accompaniment_path.write_bytes(await accompaniment.read())
+    try:
+        await save_upload_limited(vocals, vocals_path, MAX_AUDIO_UPLOAD_BYTES, "audio")
+        await save_upload_limited(accompaniment, accompaniment_path, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    except HTTPException:
+        vocals_path.unlink(missing_ok=True)
+        accompaniment_path.unlink(missing_ok=True)
+        raise
     try:
         vocals_metadata = inspect_audio(vocals_path)
         accompaniment_metadata = inspect_audio(accompaniment_path)
@@ -350,7 +367,7 @@ async def cover_workflow(
     jid = uuid.uuid4().hex
     safe = Path(song.filename or "song.wav").name
     source = INBOX / f"{jid}_{safe}"
-    source.write_bytes(await song.read())
+    await save_upload_limited(song, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
@@ -457,7 +474,7 @@ async def separation_workflow(
     jid = uuid.uuid4().hex
     safe = Path(input_audio.filename or "song.wav").name
     source = INBOX / f"{jid}_{safe}"
-    source.write_bytes(await input_audio.read())
+    await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
@@ -533,14 +550,15 @@ async def singing_workflow(
         raise HTTPException(400, "singing input must be a DiffSinger .ds file")
     jid = uuid.uuid4().hex
     source = INBOX / f"{jid}_{safe}"
-    content = await ds_file.read()
+    await save_upload_limited(ds_file, source, MAX_DOCUMENT_UPLOAD_BYTES, "DiffSinger DS")
     try:
-        document = json.loads(content)
+        document = json.loads(source.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        source.unlink(missing_ok=True)
         raise HTTPException(400, "DiffSinger DS file must contain valid UTF-8 JSON") from error
     if not isinstance(document, (dict, list)) or not document:
+        source.unlink(missing_ok=True)
         raise HTTPException(400, "DiffSinger DS file must contain at least one segment")
-    source.write_bytes(content)
     jobs[jid] = {
         "id": jid,
         "type": "singing_synthesis",
@@ -724,7 +742,7 @@ async def voice_conversion_workflow(
     jid = uuid.uuid4().hex
     safe = Path(input_audio.filename or "input.wav").name
     source = INBOX / f"{jid}_{safe}"
-    source.write_bytes(await input_audio.read())
+    await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:

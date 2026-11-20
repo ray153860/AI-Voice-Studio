@@ -111,6 +111,35 @@ def test_invalid_audio_rejected(tmp_path, monkeypatch):
     assert client.post("/api/workflow/audio", files={"file": ("bad.wav", b"not audio")}).status_code == 400
 
 
+def test_audio_analysis_rejects_payload_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/audio/analyze",
+        files={"file": ("too-large.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
+def test_audio_compare_cleans_first_file_when_second_exceeds_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/audio/compare",
+        files={
+            "before": ("before.wav", b"123", "audio/wav"),
+            "after": ("after.wav", b"123456789", "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
 def test_audio_upload_rejects_payload_over_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8, raising=False)
@@ -164,6 +193,25 @@ def test_model_import_validation(tmp_path, monkeypatch):
         files={"file": ("voice.pth", b"data")},
     )
     assert missing_license.status_code == 400
+
+
+def test_model_import_rejects_payload_over_limit(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    models = tmp_path / "models"
+    models.mkdir()
+    monkeypatch.setattr(app_module, "MODELS", models)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    monkeypatch.setattr(app_module, "MAX_MODEL_UPLOAD_BYTES", 8, raising=False)
+
+    response = ApiClient(app_module.app).post(
+        "/api/models",
+        data={"model_type": "rvc", "license_name": "user-owned"},
+        files={"file": ("voice.pth", b"123456789", "application/octet-stream")},
+    )
+
+    assert response.status_code == 413
+    assert not list(models.iterdir())
 
 
 def test_tts_requires_configured_engine(tmp_path, monkeypatch):
@@ -250,6 +298,33 @@ def test_voice_conversion_requires_configured_engine(tmp_path, monkeypatch):
         files={"input_audio": ("input.wav", b"unused")},
     )
     assert response.status_code == 503
+
+
+def test_voice_conversion_rejects_input_audio_over_limit(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    engine = tmp_path / "applio"
+    engine.mkdir()
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.save_model({"id": "voice-model", "type": "rvc", "name": "voice.pth", "path": str(model_path)})
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", store)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/voice-conversion",
+        data={"model_id": "voice-model"},
+        files={"input_audio": ("input.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert not list(inbox.iterdir())
 
 
 def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch):
@@ -361,6 +436,20 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert retried_job["result"]["engine"] == "simulated-demucs"
 
 
+def test_separation_rejects_input_audio_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/separate",
+        files={"input_audio": ("song.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
 def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
@@ -398,6 +487,38 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert retried_job["status"] == "completed"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["duration"] == 1.0
+
+
+def test_mix_rejects_vocal_audio_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/mix",
+        files={
+            "vocals": ("vocals.wav", b"123456789", "audio/wav"),
+            "accompaniment": ("accompaniment.wav", b"123", "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
+def test_mix_cleans_vocal_when_accompaniment_exceeds_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/mix",
+        files={
+            "vocals": ("vocals.wav", b"123", "audio/wav"),
+            "accompaniment": ("accompaniment.wav", b"123456789", "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
 
 
 def test_mix_runner_honors_cancellation_before_processing(tmp_path, monkeypatch):
@@ -443,6 +564,19 @@ def test_midi_inspection_api(tmp_path, monkeypatch):
     assert response.json()["notes"][0]["pitch"] == 60
 
 
+def test_midi_inspection_rejects_payload_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_DOCUMENT_UPLOAD_BYTES", 8, raising=False)
+
+    response = ApiClient(app_module.app).post(
+        "/api/midi/inspect",
+        files={"file": ("melody.mid", b"123456789", "audio/midi")},
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
 def test_midi_lyrics_alignment_api(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     events = b"\x00\x90\x3c\x64\x83\x60\x80\x3c\x00\x00\xff\x2f\x00"
@@ -465,6 +599,40 @@ def test_midi_lyrics_alignment_api(tmp_path, monkeypatch):
     assert response.json()["status"] == "aligned_no_phonemization_no_synthesis"
     assert response.json()["score"][0]["lyric"] == "你"
     assert response.json()["score"][0]["pitch"] == 60
+
+
+def test_midi_lyrics_alignment_rejects_payload_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_DOCUMENT_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/singing/align",
+        data={"lyrics": "你"},
+        files={"midi_file": ("melody.mid", b"123456789", "audio/midi")},
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
+def test_singing_workflow_rejects_ds_file_over_limit(tmp_path, monkeypatch):
+    engine = tmp_path / "diffsinger"
+    engine.mkdir()
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setenv("DIFFSINGER_ROOT", str(engine))
+    monkeypatch.setenv("DIFFSINGER_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "MAX_DOCUMENT_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/singing",
+        data={"experiment": "licensed-singer"},
+        files={"ds_file": ("song.ds", b"123456789", "application/json")},
+    )
+
+    assert response.status_code == 413
+    assert not list(inbox.iterdir())
 
 
 def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
@@ -584,6 +752,22 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     assert retried_job["result"]["engine"] == "simulated-applio-training"
 
 
+def test_dataset_import_rejects_audio_over_limit_and_cleans_directory(tmp_path, monkeypatch):
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    monkeypatch.setattr(app_module, "DATASETS", datasets)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/datasets",
+        data={"name": "Authorized clips", "license_name": "owned-recordings"},
+        files=[("files", ("clip.wav", b"123456789", "audio/wav"))],
+    )
+
+    assert response.status_code == 413
+    assert not list(datasets.iterdir())
+
+
 def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
@@ -660,3 +844,31 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert retried_job["status"] == "completed"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["stages"][-1] == "mix"
+
+
+def test_cover_rejects_song_audio_over_limit(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    engine = tmp_path / "applio"
+    engine.mkdir()
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.save_model({"id": "cover-voice", "type": "rvc", "name": "voice.pth", "path": str(model_path)})
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", store)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/cover",
+        data={"model_id": "cover-voice"},
+        files={"song": ("song.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert not list(inbox.iterdir())
