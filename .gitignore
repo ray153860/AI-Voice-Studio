@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.py[cod]
+*.wav
+models/
+data/
+work/runtime/
+src/*.egg-info/

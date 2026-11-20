@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.wav -text
+*.flac -text
+*.mp3 -text
