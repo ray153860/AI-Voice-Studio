@@ -179,6 +179,21 @@ def test_tts_requires_configured_engine(tmp_path, monkeypatch):
     assert client.get("/api/engines").json()[0]["configured"] is False
 
 
+def test_tts_rejects_reference_audio_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("GPT_SOVITS_URL", "http://engine.test:9880")
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/tts",
+        data={"text": "测试"},
+        files={"reference_audio": ("reference.wav", b"123456789", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
 def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     inbox = tmp_path / "audio"
     outputs = tmp_path / "outputs"

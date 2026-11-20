@@ -812,7 +812,7 @@ async def tts_workflow(
     jid = uuid.uuid4().hex
     safe = Path(reference_audio.filename or "reference.wav").name
     source = INBOX / f"{jid}_{safe}"
-    source.write_bytes(await reference_audio.read())
+    await save_upload_limited(reference_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
