@@ -150,3 +150,63 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert job["status"] == "completed"
     assert job["result"]["engine"] == "simulated-gpt-sovits"
     assert client.get(job["output"]).status_code == 200
+
+
+def test_voice_conversion_requires_configured_engine(tmp_path, monkeypatch):
+    monkeypatch.delenv("APPLIO_ROOT", raising=False)
+    monkeypatch.delenv("APPLIO_PYTHON", raising=False)
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/voice-conversion",
+        data={"model_id": "missing"},
+        files={"input_audio": ("input.wav", b"unused")},
+    )
+    assert response.status_code == 503
+
+
+def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    engine = tmp_path / "applio"
+    for directory in (inbox, outputs, engine):
+        directory.mkdir()
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.save_model(
+        {"id": "voice-model", "type": "rvc", "name": "voice.pth", "path": str(model_path), "status": "registered_unverified"}
+    )
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+    app_module.cancel_flags.clear()
+
+    class FakeAdapter:
+        def __init__(self, applio_root, python_executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            assert request.model_id == "voice-model"
+            target = self.output_dir / "simulated-rvc.wav"
+            sf.write(target, np.zeros(4800, dtype="float32"), 48000)
+            return EngineResult(str(target), 48000, "simulated-applio", {"duration": 0.1})
+
+    monkeypatch.setattr(app_module, "ApplioAdapter", FakeAdapter)
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(1600, dtype="float32"), 16000, format="WAV")
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/workflow/voice-conversion",
+        data={"model_id": "voice-model", "pitch": "2", "f0_method": "rmvpe"},
+        files={"input_audio": ("input.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["result"]["engine"] == "simulated-applio"

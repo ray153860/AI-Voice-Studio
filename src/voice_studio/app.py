@@ -8,6 +8,7 @@ import soundfile as sf
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
+from .adapters.applio import ApplioAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, process_audio
 from .engines import EngineRequest
@@ -39,17 +40,21 @@ async def list_jobs(): return store.list_jobs()
 @app.get("/api/capabilities")
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
+    rvc_status = "configured_unverified" if os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON") else "interface_only_dependencies_missing"
     return {
         "audio_processing": "verified_real_processing",
         "tts": tts_status,
-        "voice_conversion": "interface_only_dependencies_missing",
+        "voice_conversion": rvc_status,
         "vocal_separation": "interface_only_dependencies_missing",
         "singing_synthesis": "interface_only_dependencies_missing",
         "model_training": "not_developed",
     }
 @app.get("/api/engines")
 async def engines():
-    return [{"id": "gpt-sovits", "capability": "tts", "configured": bool(os.environ.get("GPT_SOVITS_URL")), "verification": "not_run"}]
+    return [
+        {"id": "gpt-sovits", "capability": "tts", "configured": bool(os.environ.get("GPT_SOVITS_URL")), "verification": "not_run"},
+        {"id": "applio", "capability": "voice_conversion", "configured": bool(os.environ.get("APPLIO_ROOT") and os.environ.get("APPLIO_PYTHON")), "verification": "not_run"},
+    ]
 @app.get("/api/models")
 async def list_models(): return store.list_models()
 @app.post("/api/models")
@@ -87,6 +92,7 @@ async def import_model(
         "license": license_name.strip(),
         "source_url": source_url.strip(),
         "status": "registered_unverified",
+        "path": str(target),
     }
     store.save_model(model)
     return model
@@ -102,6 +108,92 @@ async def workflow(file: UploadFile, bg: BackgroundTasks):
     store.save_job(jobs[jid])
     bg.add_task(run_job,jid,src)
     return jobs[jid]
+@app.post("/api/workflow/voice-conversion")
+async def voice_conversion_workflow(
+    bg: BackgroundTasks,
+    input_audio: UploadFile,
+    model_id: str = Form(),
+    index_model_id: str = Form(default=""),
+    pitch: int = Form(default=0),
+    index_rate: float = Form(default=0.5),
+    protect: float = Form(default=0.33),
+    f0_method: str = Form(default="rmvpe"),
+):
+    applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+    applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+    if not applio_root or not applio_python:
+        raise HTTPException(503, "Applio engine environment is not configured")
+    model = store.get_model(model_id)
+    if not model or model["type"] != "rvc" or Path(model["name"]).suffix.lower() != ".pth":
+        raise HTTPException(400, "a registered RVC .pth inference model is required")
+    index_path = ""
+    if index_model_id:
+        index_model = store.get_model(index_model_id)
+        if not index_model or index_model["type"] != "rvc" or Path(index_model["name"]).suffix.lower() != ".index":
+            raise HTTPException(400, "index_model_id must reference a registered RVC .index file")
+        index_path = index_model["path"]
+    jid = uuid.uuid4().hex
+    safe = Path(input_audio.filename or "input.wav").name
+    source = INBOX / f"{jid}_{safe}"
+    source.write_bytes(await input_audio.read())
+    try:
+        metadata = inspect_audio(source)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        source.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    jobs[jid] = {
+        "id": jid,
+        "type": "voice_conversion",
+        "status": "queued",
+        "input": safe,
+        "model_id": model_id,
+        "metadata": metadata,
+        "log": [],
+    }
+    store.save_job(jobs[jid])
+    request = EngineRequest(
+        input_audio=str(source),
+        model_id=model_id,
+        parameters={
+            "model_path": model["path"],
+            "index_path": index_path,
+            "pitch": pitch,
+            "index_rate": index_rate,
+            "protect": protect,
+            "f0_method": f0_method,
+        },
+    )
+    bg.add_task(run_voice_conversion_job, jid, Path(applio_root), applio_python, request)
+    return jobs[jid]
+
+
+async def run_voice_conversion_job(jid, applio_root, applio_python, request):
+    job = jobs[jid]
+    job["status"] = "running"
+    job["log"].append("submitted to Applio CLI")
+    store.save_job(job)
+    try:
+        if cancel_flags.get(jid):
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        result = await ApplioAdapter(applio_root, applio_python, OUT).run(request)
+        output = Path(result.output_audio)
+        if cancel_flags.get(jid):
+            output.unlink(missing_ok=True)
+            job.update(status="cancelled")
+            store.save_job(job)
+            return
+        job.update(
+            status="completed",
+            output=f"/api/outputs/{output.name}",
+            result={"sample_rate": result.sample_rate, "engine": result.engine, **result.metadata},
+        )
+        job["log"].append("received and validated RVC WAV output")
+    except (RuntimeError, ValueError, OSError) as error:
+        job.update(status="failed", error=str(error))
+        job["log"].append(str(error))
+    store.save_job(job)
 @app.post("/api/workflow/tts")
 async def tts_workflow(
     bg: BackgroundTasks,
