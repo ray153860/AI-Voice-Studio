@@ -680,6 +680,18 @@ async def voice_conversion_workflow(
         "input": safe,
         "model_id": model_id,
         "metadata": metadata,
+        "retry": {
+            "input_audio": str(source),
+            "model_id": model_id,
+            "parameters": {
+                "model_path": model["path"],
+                "index_path": index_path,
+                "pitch": pitch,
+                "index_rate": index_rate,
+                "protect": protect,
+                "f0_method": f0_method,
+            },
+        },
         "log": [],
     }
     store.save_job(jobs[jid])
@@ -836,6 +848,38 @@ async def retry_job(jid, bg: BackgroundTasks):
     if not job: raise HTTPException(404,"job not found")
     if job["status"] in ("queued", "running"):
         raise HTTPException(409,"active job cannot be retried")
+    if job.get("type") == "voice_conversion":
+        applio_root = os.environ.get("APPLIO_ROOT", "").strip()
+        applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
+        if not applio_root or not applio_python:
+            raise HTTPException(503, "Applio engine environment is not configured")
+        retry = job.get("retry") or {}
+        input_audio = Path(retry.get("input_audio", ""))
+        parameters = retry.get("parameters") or {}
+        if not input_audio.is_file():
+            raise HTTPException(404, "original input audio is missing")
+        if not Path(parameters.get("model_path", "")).is_file():
+            raise HTTPException(404, "registered RVC model file is missing")
+        new_id = uuid.uuid4().hex
+        jobs[new_id] = {
+            "id": new_id,
+            "type": "voice_conversion",
+            "status": "queued",
+            "input": job["input"],
+            "model_id": retry.get("model_id", job.get("model_id", "")),
+            "metadata": job["metadata"],
+            "retry": retry,
+            "log": [f"retried from {jid}"],
+        }
+        cancel_flags.pop(new_id, None)
+        store.save_job(jobs[new_id])
+        request = EngineRequest(
+            input_audio=str(input_audio),
+            model_id=jobs[new_id]["model_id"],
+            parameters=parameters,
+        )
+        bg.add_task(run_voice_conversion_job, new_id, Path(applio_root), applio_python, request)
+        return jobs[new_id]
     if job.get("type") == "tts":
         engine_url = os.environ.get("GPT_SOVITS_URL", "").strip()
         if not engine_url:

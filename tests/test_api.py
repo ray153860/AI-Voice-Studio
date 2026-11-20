@@ -270,6 +270,13 @@ def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch)
     assert job["status"] == "completed"
     assert job["result"]["engine"] == "simulated-applio"
 
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["log"][0] == f"retried from {job['id']}"
+    assert retried_job["result"]["engine"] == "simulated-applio"
+
 
 def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     from voice_studio.store import Store
