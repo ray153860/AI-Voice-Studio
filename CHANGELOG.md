@@ -11,6 +11,7 @@
 - Applied the same bounded streaming upload path to GPT-SoVITS reference audio.
 - Extended bounded streaming uploads to RVC, Demucs, cover, mixing, quality analysis/comparison, training datasets, MIDI, DiffSinger DS and model registration, with multi-file cleanup.
 - Added a 4 GiB aggregate cap for imported training datasets, independent of the per-audio-file cap.
+- Removed temporary MIDI and quality-analysis inputs after successful processing while preserving workflow inputs required for retry.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
 - Added real WAV mixing, MIDI inspection, objective audio quality analysis, and Linux/Windows CI.
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.

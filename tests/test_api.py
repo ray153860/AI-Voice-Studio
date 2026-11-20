@@ -124,6 +124,21 @@ def test_audio_analysis_rejects_payload_over_limit(tmp_path, monkeypatch):
     assert not list(tmp_path.iterdir())
 
 
+def test_audio_analysis_removes_temporary_file_after_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/audio/analyze",
+        files={"file": ("tone.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sample_rate"] == 8000
+    assert not list(tmp_path.iterdir())
+
+
 def test_audio_compare_cleans_first_file_when_second_exceeds_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     monkeypatch.setattr(app_module, "MAX_AUDIO_UPLOAD_BYTES", 8)
@@ -137,6 +152,25 @@ def test_audio_compare_cleans_first_file_when_second_exceeds_limit(tmp_path, mon
     )
 
     assert response.status_code == 413
+    assert not list(tmp_path.iterdir())
+
+
+def test_audio_compare_removes_temporary_files_after_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    before = io.BytesIO()
+    after = io.BytesIO()
+    sf.write(before, np.zeros(800, dtype="float32"), 8000, format="WAV")
+    sf.write(after, np.ones(800, dtype="float32") * 0.1, 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/audio/compare",
+        files={
+            "before": ("before.wav", before.getvalue(), "audio/wav"),
+            "after": ("after.wav", after.getvalue(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 200
     assert not list(tmp_path.iterdir())
 
 
@@ -562,6 +596,7 @@ def test_midi_inspection_api(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "parsed_no_synthesis"
     assert response.json()["notes"][0]["pitch"] == 60
+    assert not list(tmp_path.iterdir())
 
 
 def test_midi_inspection_rejects_payload_over_limit(tmp_path, monkeypatch):
@@ -599,6 +634,7 @@ def test_midi_lyrics_alignment_api(tmp_path, monkeypatch):
     assert response.json()["status"] == "aligned_no_phonemization_no_synthesis"
     assert response.json()["score"][0]["lyric"] == "你"
     assert response.json()["score"][0]["pitch"] == 60
+    assert not list(tmp_path.iterdir())
 
 
 def test_midi_lyrics_alignment_rejects_payload_over_limit(tmp_path, monkeypatch):

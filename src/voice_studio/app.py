@@ -79,6 +79,7 @@ async def inspect_midi(file: UploadFile):
     except (ValueError, OSError) as error:
         target.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
+    target.unlink(missing_ok=True)
     return {"file": safe, "status": "parsed_no_synthesis", **result}
 
 
@@ -95,6 +96,7 @@ async def align_singing_score(midi_file: UploadFile, lyrics: str = Form()):
     except (ValueError, OSError) as error:
         target.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
+    target.unlink(missing_ok=True)
     return {
         "file": safe,
         "status": "aligned_no_phonemization_no_synthesis",
@@ -109,10 +111,12 @@ async def audio_quality(file: UploadFile):
     target = INBOX / f"analysis-{uuid.uuid4().hex}_{safe}"
     await save_upload_limited(file, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
-        return {"file": safe, **analyze_audio(target)}
+        result = {"file": safe, **analyze_audio(target)}
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
         target.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
+    target.unlink(missing_ok=True)
+    return result
 @app.post("/api/audio/compare")
 async def compare_audio_quality(before: UploadFile, after: UploadFile):
     comparison_id = uuid.uuid4().hex
@@ -126,11 +130,14 @@ async def compare_audio_quality(before: UploadFile, after: UploadFile):
         after_path.unlink(missing_ok=True)
         raise
     try:
-        return compare_audio(before_path, after_path)
+        result = compare_audio(before_path, after_path)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
         before_path.unlink(missing_ok=True)
         after_path.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
+    before_path.unlink(missing_ok=True)
+    after_path.unlink(missing_ok=True)
+    return result
 @app.get("/api/capabilities")
 async def capabilities():
     tts_status = "configured_unverified" if os.environ.get("GPT_SOVITS_URL") else "interface_only_dependencies_missing"
