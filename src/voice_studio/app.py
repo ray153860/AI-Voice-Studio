@@ -257,14 +257,16 @@ async def import_model(
     store.save_model(model)
     return model
 @app.post("/api/workflow/audio")
-async def workflow(file: UploadFile, bg: BackgroundTasks):
+async def workflow(file: UploadFile, bg: BackgroundTasks, project_id: str = Form(default="")):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     jid=uuid.uuid4().hex
     safe=Path(file.filename or "audio.wav").name
     src=INBOX/f"{jid}_{safe}"
     await save_upload_limited(file, src, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try: meta=inspect_audio(src)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as e: src.unlink(missing_ok=True); raise HTTPException(400,str(e)) from e
-    jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"metadata":meta,"log":[]}
+    jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"project_id":project_id,"metadata":meta,"log":[]}
     store.save_job(jobs[jid])
     bg.add_task(run_job,jid,src)
     return jobs[jid]

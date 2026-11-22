@@ -52,6 +52,10 @@ class Store:
         with self.connect() as db: db.execute("DELETE FROM jobs WHERE id=?", (jid,))
     def create_project(self, pid, name):
         with self.connect() as db: db.execute("INSERT INTO projects(id,name) VALUES (?,?)",(pid,name))
+    def get_project(self, pid):
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+        return dict(row) if row else None
     def list_projects(self):
         with self.connect() as db: return [dict(r) for r in db.execute("SELECT * FROM projects ORDER BY created_at DESC")]
 

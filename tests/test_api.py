@@ -49,6 +49,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "运行翻唱预设工作流" in response.text
     assert 'id="jobControlId"' in response.text
     assert "重新执行任务" in response.text
+    assert 'id="audioProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -75,15 +76,21 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
     created = client.post("/api/projects", json={"name": "Demo"})
     assert created.status_code == 200
     assert client.get("/api/projects").json()[0]["name"] == "Demo"
+    project_id = created.json()["id"]
 
     buf = io.BytesIO()
     sf.write(buf, (np.sin(np.arange(8000) * .03) * .2).astype("float32"), 8000, format="WAV")
-    response = client.post("/api/workflow/audio", files={"file": ("tone.wav", buf.getvalue(), "audio/wav")})
+    response = client.post(
+        "/api/workflow/audio",
+        data={"project_id": project_id},
+        files={"file": ("tone.wav", buf.getvalue(), "audio/wav")},
+    )
     assert response.status_code == 200
     jid = response.json()["id"]
     job = client.get(f"/api/jobs/{jid}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == project_id
     assert client.get(job["output"]).status_code == 200
     assert client.get("/api/jobs").json()[0]["id"] == jid
 
@@ -110,6 +117,25 @@ def test_invalid_audio_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     client = ApiClient(app_module.app)
     assert client.post("/api/workflow/audio", files={"file": ("bad.wav", b"not audio")}).status_code == 400
+
+
+def test_audio_workflow_rejects_unknown_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(80, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/audio",
+        data={"project_id": "missing-project"},
+        files={"file": ("tone.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(tmp_path.glob("*.wav"))
 
 
 def test_audio_analysis_rejects_payload_over_limit(tmp_path, monkeypatch):
