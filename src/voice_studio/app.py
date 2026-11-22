@@ -841,7 +841,10 @@ async def tts_workflow(
     text_lang: str = Form(default="zh"),
     prompt_lang: str = Form(default="zh"),
     prompt_text: str = Form(default=""),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     engine_url = os.environ.get("GPT_SOVITS_URL", "").strip()
     if not engine_url:
         raise HTTPException(503, "GPT-SoVITS engine URL is not configured")
@@ -861,6 +864,7 @@ async def tts_workflow(
         "type": "tts",
         "status": "queued",
         "input": safe,
+        "project_id": project_id,
         "metadata": metadata,
         "retry": {
             "reference_audio": str(source),
@@ -1131,6 +1135,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "tts",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],

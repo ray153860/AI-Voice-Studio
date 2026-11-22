@@ -50,6 +50,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="jobControlId"' in response.text
     assert "重新执行任务" in response.text
     assert 'id="audioProject"' in response.text
+    assert 'id="ttsProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -304,6 +305,8 @@ def test_tts_rejects_reference_audio_over_limit(tmp_path, monkeypatch):
 
 
 def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
     inbox = tmp_path / "audio"
     outputs = tmp_path / "outputs"
     inbox.mkdir()
@@ -311,7 +314,9 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     monkeypatch.setenv("GPT_SOVITS_URL", "http://engine.test:9880")
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
-    monkeypatch.setattr(app_module, "store", __import__("voice_studio.store", fromlist=["Store"]).Store(tmp_path / "studio.sqlite3"))
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("tts-project", "TTS Project")
+    monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
     app_module.cancel_flags.clear()
 
@@ -330,7 +335,7 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/tts",
-        data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh"},
+        data={"text": "测试", "text_lang": "zh", "prompt_lang": "zh", "project_id": "tts-project"},
         files={"reference_audio": ("reference.wav", reference.getvalue(), "audio/wav")},
     )
 
@@ -338,6 +343,7 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == "tts-project"
     assert job["result"]["engine"] == "simulated-gpt-sovits"
     assert client.get(job["output"]).status_code == 200
 
@@ -346,8 +352,31 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
     assert retried_job["id"] != job["id"]
+    assert retried_job["project_id"] == "tts-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-gpt-sovits"
+
+
+def test_tts_workflow_rejects_unknown_project_before_upload(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setenv("GPT_SOVITS_URL", "http://engine.test:9880")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    reference = io.BytesIO()
+    sf.write(reference, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/tts",
+        data={"text": "test", "project_id": "missing-project"},
+        files={"reference_audio": ("reference.wav", reference.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(inbox.iterdir())
 
 
 def test_voice_conversion_requires_configured_engine(tmp_path, monkeypatch):
