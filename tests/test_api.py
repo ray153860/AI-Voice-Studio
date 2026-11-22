@@ -52,6 +52,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="audioProject"' in response.text
     assert 'id="ttsProject"' in response.text
     assert 'id="rvcProject"' in response.text
+    assert 'id="coverProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -929,6 +930,7 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     model_path = tmp_path / "voice.pth"
     model_path.write_bytes(b"model")
     store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("cover-project", "Cover Project")
     store.save_model(
         {"id": "cover-voice", "type": "rvc", "name": "voice.pth", "path": str(model_path), "status": "registered_unverified"}
     )
@@ -976,7 +978,13 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     client = ApiClient(app_module.app)
     started = client.post(
         "/api/workflow/cover",
-        data={"model_id": "cover-voice", "pitch": "2", "chunk_seconds": "0.5", "overlap_seconds": "0.1"},
+        data={
+            "model_id": "cover-voice",
+            "pitch": "2",
+            "chunk_seconds": "0.5",
+            "overlap_seconds": "0.1",
+            "project_id": "cover-project",
+        },
         files={"song": ("song.wav", song.getvalue(), "audio/wav")},
     )
 
@@ -985,6 +993,7 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert job["status"] == "completed"
     assert job["progress"] == 100
     assert job["progress_stage"] == "mix"
+    assert job["project_id"] == "cover-project"
     assert job["result"]["stages"] == ["separation", "voice_conversion", "quality_comparison", "mix"]
     assert job["result"]["engines"] == {"separation": "simulated-demucs", "voice_conversion": "simulated-applio"}
     assert job["result"]["chunking"]["chunk_count"] == 3
@@ -994,6 +1003,7 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "cover-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["stages"][-1] == "mix"
 
@@ -1023,4 +1033,30 @@ def test_cover_rejects_song_audio_over_limit(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 413
+    assert not list(inbox.iterdir())
+
+
+def test_cover_rejects_unknown_project_before_upload(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    engine = tmp_path / "applio"
+    inbox = tmp_path / "audio"
+    engine.mkdir()
+    inbox.mkdir()
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    song = io.BytesIO()
+    sf.write(song, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/cover",
+        data={"model_id": "missing-model", "project_id": "missing-project"},
+        files={"song": ("song.wav", song.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
     assert not list(inbox.iterdir())

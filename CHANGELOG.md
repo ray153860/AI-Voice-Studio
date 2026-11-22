@@ -16,6 +16,7 @@
 - Added validated project association for base audio jobs and a project selector in the unified UI.
 - Added validated project association for GPT-SoVITS jobs, including retry preservation and a UI selector.
 - Added validated project association for Applio RVC conversion jobs, including retry preservation and a UI selector.
+- Added validated project association for the AI cover preset, including retry preservation and a UI selector.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
 - Added real WAV mixing, MIDI inspection, objective audio quality analysis, and Linux/Windows CI.
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.

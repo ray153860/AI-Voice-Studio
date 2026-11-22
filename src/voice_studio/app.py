@@ -363,7 +363,10 @@ async def cover_workflow(
     accompaniment_gain_db: float = Form(default=0),
     chunk_seconds: float = Form(default=0),
     overlap_seconds: float = Form(default=1),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     demucs_executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
     applio_root = os.environ.get("APPLIO_ROOT", "").strip()
     applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
@@ -398,6 +401,7 @@ async def cover_workflow(
         "type": "cover_workflow",
         "status": "queued",
         "input": safe,
+        "project_id": project_id,
         "model_id": model_id,
         "metadata": metadata,
         "retry": {
@@ -1025,6 +1029,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "cover_workflow",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "model_id": job.get("model_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
