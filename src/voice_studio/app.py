@@ -277,7 +277,10 @@ async def mix_workflow(
     accompaniment: UploadFile,
     vocal_gain_db: float = Form(default=0),
     accompaniment_gain_db: float = Form(default=0),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     jid = uuid.uuid4().hex
     vocals_path = INBOX / f"{jid}_vocals_{Path(vocals.filename or 'vocals.wav').name}"
     accompaniment_path = INBOX / f"{jid}_accompaniment_{Path(accompaniment.filename or 'accompaniment.wav').name}"
@@ -300,6 +303,7 @@ async def mix_workflow(
         "type": "audio_mix",
         "status": "queued",
         "input": [vocals.filename, accompaniment.filename],
+        "project_id": project_id,
         "metadata": {"vocals": vocals_metadata, "accompaniment": accompaniment_metadata},
         "retry": {
             "vocals_path": str(vocals_path),
@@ -1008,6 +1012,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "audio_mix",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],

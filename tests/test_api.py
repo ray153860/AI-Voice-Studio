@@ -56,6 +56,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="separationProject"' in response.text
     assert 'id="singingProject"' in response.text
     assert 'id="trainingProject"' in response.text
+    assert 'id="mixProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -611,7 +612,9 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     outputs.mkdir()
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
-    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("mix-project", "Mix Project")
+    monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
     vocals = io.BytesIO()
     accompaniment = io.BytesIO()
@@ -620,7 +623,7 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/mix",
-        data={"vocal_gain_db": "-3", "accompaniment_gain_db": "0"},
+        data={"vocal_gain_db": "-3", "accompaniment_gain_db": "0", "project_id": "mix-project"},
         files={
             "vocals": ("vocals.wav", vocals.getvalue(), "audio/wav"),
             "accompaniment": ("accompaniment.wav", accompaniment.getvalue(), "audio/wav"),
@@ -631,6 +634,7 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == "mix-project"
     assert job["result"]["duration"] == 1.0
     assert client.get(job["output"]).status_code == 200
 
@@ -638,8 +642,35 @@ def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "mix-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["duration"] == 1.0
+
+
+def test_mix_rejects_unknown_project_before_upload(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    vocals = io.BytesIO()
+    accompaniment = io.BytesIO()
+    sf.write(vocals, np.zeros(800, dtype="float32"), 8000, format="WAV")
+    sf.write(accompaniment, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/mix",
+        data={"project_id": "missing-project"},
+        files={
+            "vocals": ("vocals.wav", vocals.getvalue(), "audio/wav"),
+            "accompaniment": ("accompaniment.wav", accompaniment.getvalue(), "audio/wav"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(inbox.iterdir())
 
 
 def test_mix_rejects_vocal_audio_over_limit(tmp_path, monkeypatch):
