@@ -57,6 +57,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="singingProject"' in response.text
     assert 'id="trainingProject"' in response.text
     assert 'id="mixProject"' in response.text
+    assert 'id="jobsProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -118,6 +119,20 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
     assert model.json()["sha256"]
     assert client.get("/api/models").json()[0]["id"] == model.json()["id"]
     assert client.get("/api/capabilities").json()["voice_conversion"] == "interface_only_dependencies_missing"
+
+
+def test_jobs_can_be_filtered_by_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    store = Store(tmp_path / "studio.sqlite3")
+    store.save_job({"id": "job-a", "status": "completed", "project_id": "project-a", "log": []})
+    store.save_job({"id": "job-b", "status": "completed", "project_id": "project-b", "log": []})
+    store.save_job({"id": "job-unassigned", "status": "completed", "project_id": "", "log": []})
+    monkeypatch.setattr(app_module, "store", store)
+
+    jobs = ApiClient(app_module.app).get("/api/jobs", params={"project_id": "project-a"}).json()
+
+    assert [job["id"] for job in jobs] == ["job-a"]
 
 
 def test_invalid_audio_rejected(tmp_path, monkeypatch):

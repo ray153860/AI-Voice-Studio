@@ -34,9 +34,15 @@ class Store:
         with self.connect() as db:
             row=db.execute("SELECT data FROM jobs WHERE id=?",(jid,)).fetchone()
         return normalize_job_progress(json.loads(row[0])) if row else None
-    def list_jobs(self):
+    def list_jobs(self, project_id=""):
+        query = "SELECT data FROM jobs"
+        parameters = ()
+        if project_id:
+            query += " WHERE json_extract(data, '$.project_id')=?"
+            parameters = (project_id,)
+        query += " ORDER BY rowid DESC LIMIT 100"
         with self.connect() as db:
-            return [normalize_job_progress(json.loads(r[0])) for r in db.execute("SELECT data FROM jobs ORDER BY rowid DESC LIMIT 100")]
+            return [normalize_job_progress(json.loads(r[0])) for r in db.execute(query, parameters)]
 
     def recover_incomplete_jobs(self):
         recovered = []

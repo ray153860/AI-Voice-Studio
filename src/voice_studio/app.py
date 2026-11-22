@@ -66,7 +66,7 @@ async def create_project(payload: dict):
     store.create_project(pid,name)
     return {"id":pid,"name":name}
 @app.get("/api/jobs")
-async def list_jobs(): return store.list_jobs()
+async def list_jobs(project_id: str = ""): return store.list_jobs(project_id)
 @app.post("/api/midi/inspect")
 async def inspect_midi(file: UploadFile):
     safe = Path(file.filename or "melody.mid").name

@@ -21,6 +21,7 @@
 - Added validated project association for DiffSinger synthesis jobs, including retry preservation and a UI selector.
 - Added validated project association for RVC training jobs, including retry preservation and a UI selector.
 - Added validated project association for audio mixing jobs, completing project selection across all current job workflows.
+- Added project-scoped job filtering to the API and unified UI.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
 - Added real WAV mixing, MIDI inspection, objective audio quality analysis, and Linux/Windows CI.
 - Added an Applio preprocess/extract/train/index adapter contract without claiming real training execution.
