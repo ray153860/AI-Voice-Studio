@@ -53,6 +53,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="ttsProject"' in response.text
     assert 'id="rvcProject"' in response.text
     assert 'id="coverProject"' in response.text
+    assert 'id="separationProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -514,7 +515,9 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
-    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("separation-project", "Separation Project")
+    monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
 
     class FakeAdapter:
@@ -540,7 +543,7 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/separate",
-        data={"model": "htdemucs"},
+        data={"model": "htdemucs", "project_id": "separation-project"},
         files={"input_audio": ("song.wav", audio.getvalue(), "audio/wav")},
     )
 
@@ -548,6 +551,7 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == "separation-project"
     assert set(job["artifacts"]) == {"vocals", "accompaniment"}
     assert all(client.get(url).status_code == 200 for url in job["artifacts"].values())
 
@@ -555,6 +559,7 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "separation-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-demucs"
 
@@ -571,6 +576,28 @@ def test_separation_rejects_input_audio_over_limit(tmp_path, monkeypatch):
 
     assert response.status_code == 413
     assert not list(tmp_path.iterdir())
+
+
+def test_separation_rejects_unknown_project_before_upload(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    inbox = tmp_path / "audio"
+    inbox.mkdir()
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/separate",
+        data={"project_id": "missing-project"},
+        files={"input_audio": ("song.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(inbox.iterdir())
 
 
 def test_mix_workflow_is_real_audio_processing(tmp_path, monkeypatch):

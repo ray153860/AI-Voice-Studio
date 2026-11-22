@@ -491,7 +491,10 @@ async def separation_workflow(
     input_audio: UploadFile,
     model: str = Form(default="htdemucs"),
     device: str = Form(default=""),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
     if not executable:
         raise HTTPException(503, "Demucs engine executable is not configured")
@@ -509,6 +512,7 @@ async def separation_workflow(
         "type": "vocal_separation",
         "status": "queued",
         "input": safe,
+        "project_id": project_id,
         "metadata": metadata,
         "retry": {
             "input_audio": str(source),
@@ -1089,6 +1093,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "vocal_separation",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],
