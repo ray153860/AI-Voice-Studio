@@ -662,7 +662,10 @@ async def train_rvc_workflow(
     batch_size: int = Form(default=4),
     sample_rate: int = Form(default=40000),
     gpu: str = Form(default="0"),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     applio_root = os.environ.get("APPLIO_ROOT", "").strip()
     applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
     if not applio_root or not applio_python:
@@ -688,6 +691,7 @@ async def train_rvc_workflow(
         "type": "rvc_training",
         "status": "queued",
         "input": dataset_id,
+        "project_id": project_id,
         "metadata": {"model_name": model_name, "dataset": dataset["name"], "total_epoch": total_epoch},
         "retry": {"model_name": model_name, "parameters": request.parameters},
         "log": [],
@@ -978,6 +982,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "rvc_training",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],

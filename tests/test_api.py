@@ -55,6 +55,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="coverProject"' in response.text
     assert 'id="separationProject"' in response.text
     assert 'id="singingProject"' in response.text
+    assert 'id="trainingProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -879,7 +880,9 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
     monkeypatch.setattr(app_module, "DATASETS", datasets, raising=False)
     monkeypatch.setattr(app_module, "MODELS", models)
-    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("training-project", "Training Project")
+    monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
     tone = io.BytesIO()
     sf.write(tone, np.zeros(1600, dtype="float32"), 16000, format="WAV")
@@ -916,13 +919,19 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     monkeypatch.setattr(app_module, "ApplioTrainingAdapter", FakeTrainingAdapter, raising=False)
     started = client.post(
         "/api/workflow/train-rvc",
-        data={"dataset_id": dataset["id"], "model_name": "DemoVoice", "total_epoch": "20"},
+        data={
+            "dataset_id": dataset["id"],
+            "model_name": "DemoVoice",
+            "total_epoch": "20",
+            "project_id": "training-project",
+        },
     )
 
     assert started.status_code == 200
     job = client.get(f"/api/jobs/{started.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == "training-project"
     assert job["result"]["engine"] == "simulated-applio-training"
     trained = [model for model in client.get("/api/models").json() if model["status"] == "trained_unverified"]
     assert {Path(model["name"]).suffix for model in trained} == {".pth", ".index"}
@@ -931,8 +940,27 @@ def test_dataset_import_and_training_workflow_with_simulated_adapter(tmp_path, m
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "training-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-applio-training"
+
+
+def test_training_workflow_rejects_unknown_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    engine = tmp_path / "applio"
+    engine.mkdir()
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/train-rvc",
+        data={"dataset_id": "missing-dataset", "model_name": "DemoVoice", "project_id": "missing-project"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
 
 
 def test_dataset_import_rejects_audio_over_limit_and_cleans_directory(tmp_path, monkeypatch):
