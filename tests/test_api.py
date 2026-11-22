@@ -54,6 +54,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="rvcProject"' in response.text
     assert 'id="coverProject"' in response.text
     assert 'id="separationProject"' in response.text
+    assert 'id="singingProject"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -788,6 +789,29 @@ def test_singing_workflow_rejects_ds_file_over_limit(tmp_path, monkeypatch):
     assert not list(inbox.iterdir())
 
 
+def test_singing_workflow_rejects_unknown_project_before_upload(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    engine = tmp_path / "diffsinger"
+    inbox = tmp_path / "audio"
+    engine.mkdir()
+    inbox.mkdir()
+    monkeypatch.setenv("DIFFSINGER_ROOT", str(engine))
+    monkeypatch.setenv("DIFFSINGER_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/singing",
+        data={"experiment": "licensed-singer", "project_id": "missing-project"},
+        files={"ds_file": ("song.ds", b'[{"ph_seq":"a"}]', "application/json")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(inbox.iterdir())
+
+
 def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
@@ -800,7 +824,9 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     monkeypatch.setenv("DIFFSINGER_PYTHON", "engine-python")
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
-    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("singing-project", "Singing Project")
+    monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
     app_module.cancel_flags.clear()
 
@@ -819,7 +845,7 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     client = ApiClient(app_module.app)
     response = client.post(
         "/api/workflow/singing",
-        data={"experiment": "licensed-singer", "speaker": "singer-a", "key": "1"},
+        data={"experiment": "licensed-singer", "speaker": "singer-a", "key": "1", "project_id": "singing-project"},
         files={"ds_file": ("song.ds", b'[{"ph_seq":"a"}]', "application/json")},
     )
 
@@ -827,6 +853,7 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     job = client.get(f"/api/jobs/{response.json()['id']}").json()
     assert job["status"] == "completed"
     assert job["progress"] == 100
+    assert job["project_id"] == "singing-project"
     assert job["result"]["engine"] == "simulated-diffsinger"
     assert client.get(job["output"]).status_code == 200
     assert client.get("/api/capabilities").json()["singing_synthesis"] == "configured_unverified"
@@ -835,6 +862,7 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "singing-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-diffsinger"
 

@@ -566,7 +566,10 @@ async def singing_workflow(
     language: str = Form(default=""),
     key: int = Form(default=0),
     steps: int | None = Form(default=None),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     diffsinger_root = os.environ.get("DIFFSINGER_ROOT", "").strip()
     diffsinger_python = os.environ.get("DIFFSINGER_PYTHON", "").strip()
     if not diffsinger_root or not diffsinger_python:
@@ -592,6 +595,7 @@ async def singing_workflow(
         "type": "singing_synthesis",
         "status": "queued",
         "input": safe,
+        "project_id": project_id,
         "metadata": {"format": "DiffSinger DS", "experiment": experiment.strip()},
         "retry": {
             "parameters": {
@@ -1070,6 +1074,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "singing_synthesis",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],
