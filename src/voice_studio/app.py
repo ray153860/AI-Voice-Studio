@@ -745,7 +745,10 @@ async def voice_conversion_workflow(
     index_rate: float = Form(default=0.5),
     protect: float = Form(default=0.33),
     f0_method: str = Form(default="rmvpe"),
+    project_id: str = Form(default=""),
 ):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
     applio_root = os.environ.get("APPLIO_ROOT", "").strip()
     applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
     if not applio_root or not applio_python:
@@ -773,6 +776,7 @@ async def voice_conversion_workflow(
         "type": "voice_conversion",
         "status": "queued",
         "input": safe,
+        "project_id": project_id,
         "model_id": model_id,
         "metadata": metadata,
         "retry": {
@@ -1107,6 +1111,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "type": "voice_conversion",
             "status": "queued",
             "input": job["input"],
+            "project_id": job.get("project_id", ""),
             "model_id": retry.get("model_id", job.get("model_id", "")),
             "metadata": job["metadata"],
             "retry": retry,
