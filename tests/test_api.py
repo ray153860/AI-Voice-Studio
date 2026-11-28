@@ -58,6 +58,11 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="trainingProject"' in response.text
     assert 'id="mixProject"' in response.text
     assert 'id="jobsProject"' in response.text
+    assert '<select id="rvcModel"' in response.text
+    assert '<select id="rvcIndex"' in response.text
+    assert '<select id="coverModel"' in response.text
+    assert '<select id="coverIndex"' in response.text
+    assert '<select id="trainingDataset"' in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
