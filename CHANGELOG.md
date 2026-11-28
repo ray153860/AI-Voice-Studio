@@ -29,6 +29,7 @@
 - Allowed Applio RVC conversion and retries to use a registered audio asset from the selected project while preserving the existing upload path.
 - Allowed Demucs vocal separation and retries to reuse a registered song asset from the selected project.
 - Allowed the full AI cover preset and retries to reuse a registered song asset from the selected project.
+- Allowed GPT-SoVITS generation and retries to reuse a registered reference-audio asset from the selected project.
 - Added a MIDI-and-lyrics to DiffSinger DS draft export that preserves note pitch, duration, internal rests, and slur flags while explicitly reporting missing model-specific phoneme fields.
 - Added per-segment DiffSinger DS validation in the UI/API and rejected structurally invalid DS files before inference submission without claiming model compatibility.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.

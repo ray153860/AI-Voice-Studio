@@ -79,6 +79,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "loadSeparationAssetOptions()" in response.text
     assert 'id="coverAsset"' in response.text
     assert "loadCoverAssetOptions()" in response.text
+    assert 'id="ttsAsset"' in response.text
+    assert "loadTtsAssetOptions()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -550,24 +552,39 @@ def test_tts_rejects_reference_audio_over_limit(tmp_path, monkeypatch):
 def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
+    assets = tmp_path / "assets"
     inbox = tmp_path / "audio"
     outputs = tmp_path / "outputs"
+    assets.mkdir()
     inbox.mkdir()
     outputs.mkdir()
     monkeypatch.setenv("GPT_SOVITS_URL", "http://engine.test:9880")
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
     store = Store(tmp_path / "studio.sqlite3")
     store.create_project("tts-project", "TTS Project")
+    asset_source = assets / "asset_reference.wav"
+    sf.write(asset_source, np.zeros(8000, dtype="float32"), 16000)
+    store.save_audio_asset(
+        {
+            "id": "tts-asset",
+            "project_id": "tts-project",
+            "name": "reference.wav",
+            "stored_name": asset_source.name,
+        }
+    )
     monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
     app_module.cancel_flags.clear()
+    references = []
 
     class FakeAdapter:
         def __init__(self, base_url, output_dir):
             self.output_dir = output_dir
 
         async def run(self, request):
+            references.append(Path(request.reference_audio))
             target = self.output_dir / "simulated.wav"
             sf.write(target, np.zeros(2400, dtype="float32"), 24000)
             return EngineResult(str(target), 24000, "simulated-gpt-sovits", {"duration": 0.1})
@@ -598,6 +615,20 @@ def test_tts_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert retried_job["project_id"] == "tts-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-gpt-sovits"
+
+    reused = client.post(
+        "/api/workflow/tts",
+        data={"text": "复用", "project_id": "tts-project", "asset_id": "tts-asset"},
+    )
+    assert reused.status_code == 200
+    reused_job = client.get(f"/api/jobs/{reused.json()['id']}").json()
+    assert reused_job["status"] == "completed"
+    assert reused_job["source_asset_id"] == "tts-asset"
+    assert references[-1] == asset_source
+
+    reused_retry = client.post(f"/api/jobs/{reused_job['id']}/retry")
+    assert reused_retry.status_code == 200
+    assert client.get(f"/api/jobs/{reused_retry.json()['id']}").json()["source_asset_id"] == "tts-asset"
 
 
 def test_tts_workflow_rejects_unknown_project_before_upload(tmp_path, monkeypatch):

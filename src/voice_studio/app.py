@@ -1059,28 +1059,42 @@ async def run_voice_conversion_job(jid, applio_root, applio_python, request):
 @app.post("/api/workflow/tts")
 async def tts_workflow(
     bg: BackgroundTasks,
-    reference_audio: UploadFile,
+    reference_audio: UploadFile | None = None,
     text: str = Form(),
     text_lang: str = Form(default="zh"),
     prompt_lang: str = Form(default="zh"),
     prompt_text: str = Form(default=""),
     project_id: str = Form(default=""),
+    asset_id: str = Form(default=""),
 ):
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project_id must reference an existing project")
     engine_url = os.environ.get("GPT_SOVITS_URL", "").strip()
     if not engine_url:
         raise HTTPException(503, "GPT-SoVITS engine URL is not configured")
+    if bool(reference_audio) == bool(asset_id):
+        raise HTTPException(400, "provide exactly one uploaded file or audio asset")
     if not text.strip():
         raise HTTPException(400, "text is required")
     jid = uuid.uuid4().hex
-    safe = Path(reference_audio.filename or "reference.wav").name
-    source = INBOX / f"{jid}_{safe}"
-    await save_upload_limited(reference_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    if asset_id:
+        asset = store.get_audio_asset(asset_id)
+        if not asset or asset.get("project_id") != project_id:
+            raise HTTPException(400, "audio asset must belong to the selected project")
+        stored_name = asset.get("stored_name", "")
+        source = ASSETS / stored_name
+        if not stored_name or Path(stored_name).name != stored_name or not source.is_file():
+            raise HTTPException(404, "audio asset file is missing")
+        safe = asset["name"]
+    else:
+        safe = Path(reference_audio.filename or "reference.wav").name
+        source = INBOX / f"{jid}_{safe}"
+        await save_upload_limited(reference_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
-        source.unlink(missing_ok=True)
+        if not asset_id:
+            source.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     jobs[jid] = {
         "id": jid,
@@ -1088,6 +1102,7 @@ async def tts_workflow(
         "status": "queued",
         "input": safe,
         "project_id": project_id,
+        "source_asset_id": asset_id,
         "metadata": metadata,
         "retry": {
             "reference_audio": str(source),
@@ -1368,6 +1383,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "status": "queued",
             "input": job["input"],
             "project_id": job.get("project_id", ""),
+            "source_asset_id": job.get("source_asset_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],
