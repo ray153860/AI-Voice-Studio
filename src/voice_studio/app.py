@@ -511,7 +511,7 @@ async def run_mix_job(jid, vocals_path, accompaniment_path, vocal_gain_db, accom
 @app.post("/api/workflow/cover")
 async def cover_workflow(
     bg: BackgroundTasks,
-    song: UploadFile,
+    song: UploadFile | None = None,
     model_id: str = Form(),
     index_model_id: str = Form(default=""),
     pitch: int = Form(default=0),
@@ -521,6 +521,7 @@ async def cover_workflow(
     chunk_seconds: float = Form(default=0),
     overlap_seconds: float = Form(default=1),
     project_id: str = Form(default=""),
+    asset_id: str = Form(default=""),
 ):
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project_id must reference an existing project")
@@ -529,6 +530,8 @@ async def cover_workflow(
     applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
     if not demucs_executable or not applio_root or not applio_python:
         raise HTTPException(503, "Demucs and Applio engine environments must both be configured")
+    if bool(song) == bool(asset_id):
+        raise HTTPException(400, "provide exactly one uploaded file or audio asset")
     model = store.get_model(model_id)
     if not model or model["type"] != "rvc" or Path(model["name"]).suffix.lower() != ".pth":
         raise HTTPException(400, "a registered RVC .pth inference model is required")
@@ -539,13 +542,24 @@ async def cover_workflow(
             raise HTTPException(400, "index_model_id must reference a registered RVC .index file")
         index_path = index_model["path"]
     jid = uuid.uuid4().hex
-    safe = Path(song.filename or "song.wav").name
-    source = INBOX / f"{jid}_{safe}"
-    await save_upload_limited(song, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    if asset_id:
+        asset = store.get_audio_asset(asset_id)
+        if not asset or asset.get("project_id") != project_id:
+            raise HTTPException(400, "audio asset must belong to the selected project")
+        stored_name = asset.get("stored_name", "")
+        source = ASSETS / stored_name
+        if not stored_name or Path(stored_name).name != stored_name or not source.is_file():
+            raise HTTPException(404, "audio asset file is missing")
+        safe = asset["name"]
+    else:
+        safe = Path(song.filename or "song.wav").name
+        source = INBOX / f"{jid}_{safe}"
+        await save_upload_limited(song, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
-        source.unlink(missing_ok=True)
+        if not asset_id:
+            source.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     conversion_parameters = {
         "model_path": model["path"],
@@ -560,6 +574,7 @@ async def cover_workflow(
         "input": safe,
         "project_id": project_id,
         "model_id": model_id,
+        "source_asset_id": asset_id,
         "metadata": metadata,
         "retry": {
             "source": str(source),
@@ -1233,6 +1248,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "input": job["input"],
             "project_id": job.get("project_id", ""),
             "model_id": job.get("model_id", ""),
+            "source_asset_id": job.get("source_asset_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],

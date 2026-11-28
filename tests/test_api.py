@@ -77,6 +77,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "loadRvcAssetOptions()" in response.text
     assert 'id="separationAsset"' in response.text
     assert "loadSeparationAssetOptions()" in response.text
+    assert 'id="coverAsset"' in response.text
+    assert "loadCoverAssetOptions()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -1484,10 +1486,11 @@ def test_dataset_import_rejects_aggregate_over_limit_and_cleans_files(tmp_path, 
 def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
+    assets = tmp_path / "assets"
     inbox = tmp_path / "audio"
     outputs = tmp_path / "outputs"
     engine = tmp_path / "applio"
-    for directory in (inbox, outputs, engine):
+    for directory in (assets, inbox, outputs, engine):
         directory.mkdir()
     model_path = tmp_path / "voice.pth"
     model_path.write_bytes(b"model")
@@ -1496,19 +1499,32 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     store.save_model(
         {"id": "cover-voice", "type": "rvc", "name": "voice.pth", "path": str(model_path), "status": "registered_unverified"}
     )
+    asset_source = assets / "asset_song.wav"
+    sf.write(asset_source, np.zeros(8000, dtype="float32"), 8000)
+    store.save_audio_asset(
+        {
+            "id": "cover-asset",
+            "project_id": "cover-project",
+            "name": "asset-song.wav",
+            "stored_name": asset_source.name,
+        }
+    )
     monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
     monkeypatch.setenv("APPLIO_ROOT", str(engine))
     monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
     monkeypatch.setattr(app_module, "INBOX", inbox)
     monkeypatch.setattr(app_module, "OUT", outputs)
     monkeypatch.setattr(app_module, "store", store)
     app_module.jobs.clear()
+    separation_inputs = []
 
     class FakeSeparator:
         def __init__(self, executable, output_dir):
             self.output_dir = output_dir
 
         async def run(self, request):
+            separation_inputs.append(Path(request.input_audio))
             vocals = self.output_dir / "cover-vocals.wav"
             accompaniment = self.output_dir / "cover-accompaniment.wav"
             sf.write(vocals, np.sin(np.arange(8000) * 0.1) * 0.2, 8000)
@@ -1568,6 +1584,20 @@ def test_cover_workflow_with_simulated_ai_adapters(tmp_path, monkeypatch):
     assert retried_job["project_id"] == "cover-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["stages"][-1] == "mix"
+
+    reused = client.post(
+        "/api/workflow/cover",
+        data={"model_id": "cover-voice", "project_id": "cover-project", "asset_id": "cover-asset"},
+    )
+    assert reused.status_code == 200
+    reused_job = client.get(f"/api/jobs/{reused.json()['id']}").json()
+    assert reused_job["status"] == "completed"
+    assert reused_job["source_asset_id"] == "cover-asset"
+    assert separation_inputs[-1] == asset_source
+
+    reused_retry = client.post(f"/api/jobs/{reused_job['id']}/retry")
+    assert reused_retry.status_code == 200
+    assert client.get(f"/api/jobs/{reused_retry.json()['id']}").json()["source_asset_id"] == "cover-asset"
 
 
 def test_cover_rejects_song_audio_over_limit(tmp_path, monkeypatch):
