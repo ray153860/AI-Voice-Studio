@@ -391,16 +391,35 @@ async def import_model(
     store.save_model(model)
     return model
 @app.post("/api/workflow/audio")
-async def workflow(file: UploadFile, bg: BackgroundTasks, project_id: str = Form(default="")):
+async def workflow(
+    bg: BackgroundTasks,
+    file: UploadFile | None = None,
+    project_id: str = Form(default=""),
+    asset_id: str = Form(default=""),
+):
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project_id must reference an existing project")
+    if bool(file) == bool(asset_id):
+        raise HTTPException(400, "provide exactly one uploaded file or audio asset")
     jid=uuid.uuid4().hex
-    safe=Path(file.filename or "audio.wav").name
-    src=INBOX/f"{jid}_{safe}"
-    await save_upload_limited(file, src, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    source_asset_id = ""
+    if asset_id:
+        asset = store.get_audio_asset(asset_id)
+        if not asset or asset.get("project_id") != project_id:
+            raise HTTPException(400, "audio asset must belong to the selected project")
+        stored_name = asset.get("stored_name", "")
+        src = ASSETS / stored_name
+        if not stored_name or Path(stored_name).name != stored_name or not src.is_file():
+            raise HTTPException(404, "audio asset file is missing")
+        safe = asset["name"]
+        source_asset_id = asset_id
+    else:
+        safe=Path(file.filename or "audio.wav").name
+        src=INBOX/f"{jid}_{safe}"
+        await save_upload_limited(file, src, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try: meta=inspect_audio(src)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as e: src.unlink(missing_ok=True); raise HTTPException(400,str(e)) from e
-    jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"project_id":project_id,"metadata":meta,"log":[]}
+    jobs[jid]={"id":jid,"type":"audio_processing","status":"queued","input":safe,"project_id":project_id,"source_asset_id":source_asset_id,"metadata":meta,"log":[]}
     store.save_job(jobs[jid])
     bg.add_task(run_job,jid,src)
     return jobs[jid]
@@ -1316,12 +1335,26 @@ async def retry_job(jid, bg: BackgroundTasks):
         return jobs[new_id]
     if job.get("type", "audio_processing") != "audio_processing":
         raise HTTPException(409, "retry is not implemented for this job type")
-    old=INBOX/f"{jid}_{Path(job['input']).name}"
-    if not old.is_file(): raise HTTPException(404,"original input file is missing")
     new_id=uuid.uuid4().hex
-    retry_input=INBOX/f"{new_id}_{Path(job['input']).name}"
-    retry_input.write_bytes(old.read_bytes())
-    jobs[new_id]={"id":new_id,"type":"audio_processing","status":"queued","input":job["input"],"metadata":job["metadata"],"log":[f"retried from {jid}"]}
+    source_asset_id = job.get("source_asset_id", "")
+    if source_asset_id:
+        asset = store.get_audio_asset(source_asset_id)
+        stored_name = asset.get("stored_name", "") if asset else ""
+        retry_input = ASSETS / stored_name
+        if (
+            not asset
+            or asset.get("project_id") != job.get("project_id", "")
+            or not stored_name
+            or Path(stored_name).name != stored_name
+            or not retry_input.is_file()
+        ):
+            raise HTTPException(404, "original audio asset is missing")
+    else:
+        old=INBOX/f"{jid}_{Path(job['input']).name}"
+        if not old.is_file(): raise HTTPException(404,"original input file is missing")
+        retry_input=INBOX/f"{new_id}_{Path(job['input']).name}"
+        retry_input.write_bytes(old.read_bytes())
+    jobs[new_id]={"id":new_id,"type":"audio_processing","status":"queued","input":job["input"],"project_id":job.get("project_id", ""),"source_asset_id":source_asset_id,"metadata":job["metadata"],"log":[f"retried from {jid}"]}
     cancel_flags.pop(new_id,None)
     store.save_job(jobs[new_id])
     bg.add_task(run_job,new_id,retry_input)

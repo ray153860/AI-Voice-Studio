@@ -71,6 +71,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="assetProject"' in response.text
     assert "导入项目音频" in response.text
     assert "loadAudioAssets()" in response.text
+    assert 'id="audioAsset"' in response.text
+    assert "loadAudioAssetOptions()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -119,6 +121,7 @@ def test_project_and_audio_job(tmp_path, monkeypatch):
     assert retried.status_code == 200
     retried_job = client.get(f"/api/jobs/{retried.json()['id']}").json()
     assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == project_id
     assert retried_job["log"][0] == f"retried from {jid}"
     assert client.post(f"/api/jobs/{retried_job['id']}/cancel").status_code == 409
 
@@ -300,6 +303,52 @@ def test_audio_asset_listing_omits_missing_and_unsafe_files(tmp_path, monkeypatc
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_audio_workflow_can_reuse_asset_from_same_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    assets = tmp_path / "assets"
+    inbox = tmp_path / "audio"
+    outputs = tmp_path / "outputs"
+    for directory in (assets, inbox, outputs):
+        directory.mkdir()
+    audio_path = assets / "asset_voice.wav"
+    sf.write(audio_path, (np.sin(np.arange(800) * 0.03) * 0.2).astype("float32"), 8000)
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("project-a", "Project A")
+    store.save_audio_asset(
+        {
+            "id": "asset-1",
+            "project_id": "project-a",
+            "name": "voice.wav",
+            "stored_name": audio_path.name,
+        }
+    )
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/audio",
+        data={"project_id": "project-a", "asset_id": "asset-1"},
+    )
+
+    assert response.status_code == 200
+    job = ApiClient(app_module.app).get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["input"] == "voice.wav"
+    assert job["source_asset_id"] == "asset-1"
+    assert ApiClient(app_module.app).get(job["output"]).status_code == 200
+
+    retried = ApiClient(app_module.app).post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    retried_job = ApiClient(app_module.app).get(f"/api/jobs/{retried.json()['id']}").json()
+    assert retried_job["status"] == "completed"
+    assert retried_job["project_id"] == "project-a"
+    assert retried_job["source_asset_id"] == "asset-1"
 
 
 def test_invalid_audio_rejected(tmp_path, monkeypatch):
