@@ -912,7 +912,7 @@ async def run_training_job(jid, applio_root, applio_python, request, dataset):
 @app.post("/api/workflow/voice-conversion")
 async def voice_conversion_workflow(
     bg: BackgroundTasks,
-    input_audio: UploadFile,
+    input_audio: UploadFile | None = None,
     model_id: str = Form(),
     index_model_id: str = Form(default=""),
     pitch: int = Form(default=0),
@@ -920,6 +920,7 @@ async def voice_conversion_workflow(
     protect: float = Form(default=0.33),
     f0_method: str = Form(default="rmvpe"),
     project_id: str = Form(default=""),
+    asset_id: str = Form(default=""),
 ):
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project_id must reference an existing project")
@@ -927,6 +928,8 @@ async def voice_conversion_workflow(
     applio_python = os.environ.get("APPLIO_PYTHON", "").strip()
     if not applio_root or not applio_python:
         raise HTTPException(503, "Applio engine environment is not configured")
+    if bool(input_audio) == bool(asset_id):
+        raise HTTPException(400, "provide exactly one uploaded file or audio asset")
     model = store.get_model(model_id)
     if not model or model["type"] != "rvc" or Path(model["name"]).suffix.lower() != ".pth":
         raise HTTPException(400, "a registered RVC .pth inference model is required")
@@ -937,13 +940,24 @@ async def voice_conversion_workflow(
             raise HTTPException(400, "index_model_id must reference a registered RVC .index file")
         index_path = index_model["path"]
     jid = uuid.uuid4().hex
-    safe = Path(input_audio.filename or "input.wav").name
-    source = INBOX / f"{jid}_{safe}"
-    await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    if asset_id:
+        asset = store.get_audio_asset(asset_id)
+        if not asset or asset.get("project_id") != project_id:
+            raise HTTPException(400, "audio asset must belong to the selected project")
+        stored_name = asset.get("stored_name", "")
+        source = ASSETS / stored_name
+        if not stored_name or Path(stored_name).name != stored_name or not source.is_file():
+            raise HTTPException(404, "audio asset file is missing")
+        safe = asset["name"]
+    else:
+        safe = Path(input_audio.filename or "input.wav").name
+        source = INBOX / f"{jid}_{safe}"
+        await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
-        source.unlink(missing_ok=True)
+        if not asset_id:
+            source.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     jobs[jid] = {
         "id": jid,
@@ -951,6 +965,7 @@ async def voice_conversion_workflow(
         "status": "queued",
         "input": safe,
         "project_id": project_id,
+        "source_asset_id": asset_id,
         "model_id": model_id,
         "metadata": metadata,
         "retry": {
@@ -1292,6 +1307,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "input": job["input"],
             "project_id": job.get("project_id", ""),
             "model_id": retry.get("model_id", job.get("model_id", "")),
+            "source_asset_id": job.get("source_asset_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],

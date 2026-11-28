@@ -73,6 +73,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "loadAudioAssets()" in response.text
     assert 'id="audioAsset"' in response.text
     assert "loadAudioAssetOptions()" in response.text
+    assert 'id="rvcAsset"' in response.text
+    assert "loadRvcAssetOptions()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -737,6 +739,62 @@ def test_voice_conversion_workflow_with_simulated_adapter(tmp_path, monkeypatch)
     assert retried_job["project_id"] == "rvc-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-applio"
+
+
+def test_voice_conversion_can_reuse_audio_asset_from_same_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    assets = tmp_path / "assets"
+    outputs = tmp_path / "outputs"
+    engine = tmp_path / "applio"
+    for directory in (assets, outputs, engine):
+        directory.mkdir()
+    source = assets / "asset_voice.wav"
+    sf.write(source, np.zeros(1600, dtype="float32"), 16000)
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("rvc-project", "RVC Project")
+    store.save_model({"id": "voice-model", "type": "rvc", "name": "voice.pth", "path": str(model_path)})
+    store.save_audio_asset(
+        {
+            "id": "asset-1",
+            "project_id": "rvc-project",
+            "name": "voice.wav",
+            "stored_name": source.name,
+        }
+    )
+    monkeypatch.setenv("APPLIO_ROOT", str(engine))
+    monkeypatch.setenv("APPLIO_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+
+    class FakeAdapter:
+        def __init__(self, applio_root, python_executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            assert Path(request.input_audio) == source
+            target = self.output_dir / "simulated-asset-rvc.wav"
+            sf.write(target, np.zeros(4800, dtype="float32"), 48000)
+            return EngineResult(str(target), 48000, "simulated-applio", {"duration": 0.1})
+
+    monkeypatch.setattr(app_module, "ApplioAdapter", FakeAdapter)
+    client = ApiClient(app_module.app)
+    response = client.post(
+        "/api/workflow/voice-conversion",
+        data={"model_id": "voice-model", "project_id": "rvc-project", "asset_id": "asset-1"},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["source_asset_id"] == "asset-1"
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    assert client.get(f"/api/jobs/{retried.json()['id']}").json()["source_asset_id"] == "asset-1"
 
 
 def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):

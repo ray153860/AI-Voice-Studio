@@ -26,6 +26,7 @@
 - Added project-scoped output listing with deduplication, existing-file and safe-path checks, playback, and download controls.
 - Added a project-scoped audio asset library with validated imports, rights notes, hashes, metadata, playback, and safe downloads.
 - Allowed the base audio workflow and its retries to reuse a registered asset from the selected project instead of uploading it again.
+- Allowed Applio RVC conversion and retries to use a registered audio asset from the selected project while preserving the existing upload path.
 - Added a MIDI-and-lyrics to DiffSinger DS draft export that preserves note pitch, duration, internal rests, and slur flags while explicitly reporting missing model-specific phoneme fields.
 - Added per-segment DiffSinger DS validation in the UI/API and rejected structurally invalid DS files before inference submission without claiming model compatibility.
 - Added GPT-SoVITS API, Applio RVC, Demucs separation, and DiffSinger DS acoustic-inference adapter contracts; all AI adapters remain explicitly unverified against real models.
