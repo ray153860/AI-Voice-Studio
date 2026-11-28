@@ -17,7 +17,7 @@ from .adapters.diffsinger import DiffSingerAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
 from .engines import EngineRequest, TrainingRequest
-from .midi import align_lyrics_to_notes, parse_midi
+from .midi import align_lyrics_to_notes, build_diffsinger_ds_draft, parse_midi
 from .models import sha256_file, validate_model_filename
 from .quality import analyze_audio, compare_audio
 from .store import Store
@@ -124,6 +124,29 @@ async def align_singing_score(midi_file: UploadFile, lyrics: str = Form()):
         "tempos": parsed["tempos"],
         "rests": parsed["rests"],
         "score": score,
+    }
+
+
+@app.post("/api/singing/ds-draft")
+async def create_singing_ds_draft(midi_file: UploadFile, lyrics: str = Form()):
+    safe = Path(midi_file.filename or "melody.mid").name
+    if Path(safe).suffix.lower() not in (".mid", ".midi"):
+        raise HTTPException(400, "MIDI file must use .mid or .midi")
+    target = INBOX / f"singing-draft-{uuid.uuid4().hex}_{safe}"
+    await save_upload_limited(midi_file, target, MAX_DOCUMENT_UPLOAD_BYTES, "MIDI")
+    try:
+        parsed = parse_midi(target)
+        score = align_lyrics_to_notes(parsed["notes"], lyrics)
+        draft = build_diffsinger_ds_draft(score)
+    except (ValueError, OSError) as error:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, str(error)) from error
+    target.unlink(missing_ok=True)
+    return {
+        "file": safe,
+        "status": "ds_draft_requires_model_phonemization_no_synthesis",
+        "missing_fields": ["ph_seq", "ph_dur", "ph_num"],
+        "segments": [draft],
     }
 @app.post("/api/audio/analyze")
 async def audio_quality(file: UploadFile):

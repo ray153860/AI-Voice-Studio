@@ -2,6 +2,7 @@ import struct
 
 import pytest
 
+from voice_studio import midi as midi_module
 from voice_studio.midi import align_lyrics_to_notes, parse_midi, tokenize_lyrics
 
 
@@ -64,3 +65,38 @@ def test_lyrics_alignment_rejects_count_mismatch_and_polyphony():
 
     with pytest.raises(ValueError, match="syllable count"):
         align_lyrics_to_notes([notes[0]], "你 好")
+
+
+def test_diffsinger_ds_draft_preserves_pitch_timing_rests_and_slurs():
+    assert callable(getattr(midi_module, "build_diffsinger_ds_draft", None))
+    score = [
+        {
+            "pitch": 60,
+            "start_seconds": 0.25,
+            "duration_seconds": 0.5,
+            "lyric": "你",
+            "slur": False,
+        },
+        {
+            "pitch": 62,
+            "start_seconds": 1.0,
+            "duration_seconds": 0.5,
+            "lyric": "",
+            "slur": True,
+        },
+    ]
+
+    draft = midi_module.build_diffsinger_ds_draft(score)
+
+    assert draft == {
+        "offset": 0.25,
+        "text": "你 SP -",
+        "note_seq": "C4 rest D4",
+        "note_dur": "0.5 0.25 0.5",
+        "note_slur": "0 0 1",
+    }
+
+
+def test_diffsinger_ds_draft_requires_at_least_one_note():
+    with pytest.raises(ValueError, match="at least one note"):
+        midi_module.build_diffsinger_ds_draft([])

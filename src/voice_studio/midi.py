@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 LYRIC_TOKEN = re.compile(r"[\u3400-\u9fff]|[A-Za-z0-9]+(?:'[A-Za-z]+)?|-")
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
 def tokenize_lyrics(text: str) -> list[str]:
@@ -31,6 +32,44 @@ def align_lyrics_to_notes(notes: list[dict], lyrics: str) -> list[dict]:
             previous_lyric = lyric
         aligned.append({**note, "lyric": lyric, "slur": slur})
     return aligned
+
+
+def build_diffsinger_ds_draft(score: list[dict]) -> dict:
+    ordered = sorted(score, key=lambda item: item["start_seconds"])
+    if not ordered:
+        raise ValueError("DiffSinger DS draft requires at least one note")
+    offset = ordered[0]["start_seconds"]
+    text = []
+    notes = []
+    durations = []
+    slurs = []
+    cursor = offset
+
+    def format_seconds(value):
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+
+    for item in ordered:
+        start = item["start_seconds"]
+        gap = start - cursor
+        if gap > 0.000001:
+            text.append("SP")
+            notes.append("rest")
+            durations.append(format_seconds(gap))
+            slurs.append("0")
+        pitch = item["pitch"]
+        text.append("-" if item["slur"] else item["lyric"])
+        notes.append(f"{NOTE_NAMES[pitch % 12]}{pitch // 12 - 1}")
+        durations.append(format_seconds(item["duration_seconds"]))
+        slurs.append("1" if item["slur"] else "0")
+        cursor = start + item["duration_seconds"]
+
+    return {
+        "offset": round(offset, 6),
+        "text": " ".join(text),
+        "note_seq": " ".join(notes),
+        "note_dur": " ".join(durations),
+        "note_slur": " ".join(slurs),
+    }
 
 
 def _variable_length(data: bytes, offset: int) -> tuple[int, int]:

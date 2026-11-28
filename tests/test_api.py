@@ -65,6 +65,7 @@ def test_home_exposes_diffsinger_submission_controls():
     assert '<select id="trainingDataset"' in response.text
     assert 'id="outputProject"' in response.text
     assert "查看项目输出" in response.text
+    assert "生成 DS 草稿" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -904,6 +905,41 @@ def test_midi_lyrics_alignment_api(tmp_path, monkeypatch):
     assert response.json()["status"] == "aligned_no_phonemization_no_synthesis"
     assert response.json()["score"][0]["lyric"] == "你"
     assert response.json()["score"][0]["pitch"] == 60
+    assert not list(tmp_path.iterdir())
+
+
+def test_midi_lyrics_generate_diffsinger_ds_draft(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    events = b"\x00\x90\x3c\x64\x83\x60\x80\x3c\x00\x00\xff\x2f\x00"
+    midi = (
+        b"MThd"
+        + struct.pack(">IHHH", 6, 0, 1, 480)
+        + b"MTrk"
+        + struct.pack(">I", len(events))
+        + events
+    )
+
+    response = ApiClient(app_module.app).post(
+        "/api/singing/ds-draft",
+        data={"lyrics": "你"},
+        files={"midi_file": ("melody.mid", midi, "audio/midi")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "file": "melody.mid",
+        "status": "ds_draft_requires_model_phonemization_no_synthesis",
+        "missing_fields": ["ph_seq", "ph_dur", "ph_num"],
+        "segments": [
+            {
+                "offset": 0.0,
+                "text": "你",
+                "note_seq": "C4",
+                "note_dur": "0.5",
+                "note_slur": "0",
+            }
+        ],
+    }
     assert not list(tmp_path.iterdir())
 
 
