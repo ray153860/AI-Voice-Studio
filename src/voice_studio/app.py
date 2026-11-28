@@ -16,6 +16,7 @@ from .adapters.demucs import DemucsAdapter
 from .adapters.diffsinger import DiffSingerAdapter
 from .adapters.gpt_sovits import GptSovitsAdapter
 from .audio import inspect_audio, mix_audio, process_audio
+from .diffsinger_ds import validate_diffsinger_ds
 from .engines import EngineRequest, TrainingRequest
 from .midi import align_lyrics_to_notes, build_diffsinger_ds_draft, parse_midi
 from .models import sha256_file, validate_model_filename
@@ -148,6 +149,24 @@ async def create_singing_ds_draft(midi_file: UploadFile, lyrics: str = Form()):
         "missing_fields": ["ph_seq", "ph_dur", "ph_num"],
         "segments": [draft],
     }
+
+
+@app.post("/api/singing/ds-validate")
+async def validate_singing_ds(ds_file: UploadFile):
+    safe = Path(ds_file.filename or "song.ds").name
+    if Path(safe).suffix.lower() != ".ds":
+        raise HTTPException(400, "singing input must be a DiffSinger .ds file")
+    target = INBOX / f"singing-validation-{uuid.uuid4().hex}_{safe}"
+    await save_upload_limited(ds_file, target, MAX_DOCUMENT_UPLOAD_BYTES, "DiffSinger DS")
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise HTTPException(400, "DiffSinger DS file must contain valid UTF-8 JSON") from error
+    finally:
+        target.unlink(missing_ok=True)
+    return {"file": safe, **validate_diffsinger_ds(document)}
+
+
 @app.post("/api/audio/analyze")
 async def audio_quality(file: UploadFile):
     safe = Path(file.filename or "audio.wav").name
@@ -634,9 +653,10 @@ async def singing_workflow(
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         source.unlink(missing_ok=True)
         raise HTTPException(400, "DiffSinger DS file must contain valid UTF-8 JSON") from error
-    if not isinstance(document, (dict, list)) or not document:
+    validation = validate_diffsinger_ds(document)
+    if not validation["structurally_valid"]:
         source.unlink(missing_ok=True)
-        raise HTTPException(400, "DiffSinger DS file must contain at least one segment")
+        raise HTTPException(400, f"invalid DiffSinger DS: {'; '.join(validation['errors'])}")
     jobs[jid] = {
         "id": jid,
         "type": "singing_synthesis",

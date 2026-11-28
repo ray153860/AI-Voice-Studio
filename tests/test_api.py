@@ -66,6 +66,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert 'id="outputProject"' in response.text
     assert "查看项目输出" in response.text
     assert "生成 DS 草稿" in response.text
+    assert "校验 DS 文件" in response.text
+    assert "validateSingingDs()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -943,6 +945,23 @@ def test_midi_lyrics_generate_diffsinger_ds_draft(tmp_path, monkeypatch):
     assert not list(tmp_path.iterdir())
 
 
+def test_diffsinger_ds_validation_endpoint_reports_draft_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "INBOX", tmp_path)
+    document = b'[{"text":"ni","note_seq":"C4","note_dur":"0.5","note_slur":"0"}]'
+
+    response = ApiClient(app_module.app).post(
+        "/api/singing/ds-validate",
+        files={"ds_file": ("song.ds", document, "application/json")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["file"] == "song.ds"
+    assert response.json()["status"] == "valid_ds_draft_requires_model_phonemization"
+    assert response.json()["structurally_valid"] is True
+    assert response.json()["inference_fields_complete"] is False
+    assert not list(tmp_path.iterdir())
+
+
 def test_midi_lyrics_alignment_rejects_payload_over_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "INBOX", tmp_path)
     monkeypatch.setattr(app_module, "MAX_DOCUMENT_UPLOAD_BYTES", 8)
@@ -992,11 +1011,48 @@ def test_singing_workflow_rejects_unknown_project_before_upload(tmp_path, monkey
     response = ApiClient(app_module.app).post(
         "/api/workflow/singing",
         data={"experiment": "licensed-singer", "project_id": "missing-project"},
-        files={"ds_file": ("song.ds", b'[{"ph_seq":"a"}]', "application/json")},
+        files={
+            "ds_file": (
+                "song.ds",
+                (
+                    b'[{"text":"a","note_seq":"C4","note_dur":"0.5","note_slur":"0",'
+                    b'"ph_seq":"a","ph_dur":"0.5","ph_num":"1"}]'
+                ),
+                "application/json",
+            )
+        },
     )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "project_id must reference an existing project"
+    assert not list(inbox.iterdir())
+
+
+def test_singing_workflow_rejects_structurally_invalid_ds(tmp_path, monkeypatch):
+    engine = tmp_path / "diffsinger"
+    inbox = tmp_path / "audio"
+    engine.mkdir()
+    inbox.mkdir()
+    monkeypatch.setenv("DIFFSINGER_ROOT", str(engine))
+    monkeypatch.setenv("DIFFSINGER_PYTHON", "engine-python")
+    monkeypatch.setattr(app_module, "INBOX", inbox)
+
+    response = ApiClient(app_module.app).post(
+        "/api/workflow/singing",
+        data={"experiment": "licensed-singer"},
+        files={
+            "ds_file": (
+                "song.ds",
+                b'[{"text":"ni","note_seq":"C4 D4","note_dur":"0.5","note_slur":"0 0"}]',
+                "application/json",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "invalid DiffSinger DS: segment 0: note_seq, note_dur, and note_slur must contain the same number of values"
+    )
     assert not list(inbox.iterdir())
 
 
@@ -1034,7 +1090,16 @@ def test_singing_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     response = client.post(
         "/api/workflow/singing",
         data={"experiment": "licensed-singer", "speaker": "singer-a", "key": "1", "project_id": "singing-project"},
-        files={"ds_file": ("song.ds", b'[{"ph_seq":"a"}]', "application/json")},
+        files={
+            "ds_file": (
+                "song.ds",
+                (
+                    b'[{"text":"a","note_seq":"C4","note_dur":"0.5","note_slur":"0",'
+                    b'"ph_seq":"a","ph_dur":"0.5","ph_num":"1"}]'
+                ),
+                "application/json",
+            )
+        },
     )
 
     assert response.status_code == 200
