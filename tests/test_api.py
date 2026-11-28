@@ -68,6 +68,9 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "生成 DS 草稿" in response.text
     assert "校验 DS 文件" in response.text
     assert "validateSingingDs()" in response.text
+    assert 'id="assetProject"' in response.text
+    assert "导入项目音频" in response.text
+    assert "loadAudioAssets()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -241,6 +244,62 @@ def test_project_outputs_reject_unknown_project(tmp_path, monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "project not found"
+
+
+def test_project_audio_asset_can_be_imported_listed_and_downloaded(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("project-a", "Project A")
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
+    monkeypatch.setattr(app_module, "store", store)
+    audio = io.BytesIO()
+    sf.write(audio, np.zeros(800, dtype="float32"), 8000, format="WAV")
+
+    imported = ApiClient(app_module.app).post(
+        "/api/audio-assets",
+        data={"project_id": "project-a", "rights_note": "self-recorded"},
+        files={"file": ("voice.wav", audio.getvalue(), "audio/wav")},
+    )
+
+    assert imported.status_code == 200
+    asset = imported.json()
+    assert asset["project_id"] == "project-a"
+    assert asset["name"] == "voice.wav"
+    assert asset["rights_note"] == "self-recorded"
+    assert asset["status"] == "registered_audio_validated"
+    assert asset["sha256"]
+    assert asset["metadata"]["sample_rate"] == 8000
+    assert asset["media_type"] == "audio/wav"
+    assert ApiClient(app_module.app).get("/api/audio-assets", params={"project_id": "project-a"}).json() == [asset]
+    downloaded = ApiClient(app_module.app).get(f"/api/audio-assets/{asset['id']}/download")
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"].startswith("audio/wav")
+    assert downloaded.content == audio.getvalue()
+
+
+def test_audio_asset_listing_omits_missing_and_unsafe_files(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("project-a", "Project A")
+    store.save_audio_asset(
+        {"id": "missing", "project_id": "project-a", "name": "missing.wav", "stored_name": "missing.wav"}
+    )
+    store.save_audio_asset(
+        {"id": "unsafe", "project_id": "project-a", "name": "unsafe.wav", "stored_name": "../unsafe.wav"}
+    )
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
+    monkeypatch.setattr(app_module, "store", store)
+
+    response = ApiClient(app_module.app).get("/api/audio-assets", params={"project_id": "project-a"})
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_invalid_audio_rejected(tmp_path, monkeypatch):

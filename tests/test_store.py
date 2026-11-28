@@ -21,3 +21,18 @@ def test_training_dataset_metadata_is_persistent(tmp_path):
     reopened = Store(database)
     assert reopened.get_dataset("dataset-1") == dataset
     assert reopened.list_datasets() == [dataset]
+
+
+def test_audio_asset_metadata_is_persistent_and_filtered_by_project(tmp_path):
+    database = tmp_path / "studio.sqlite3"
+    store = Store(database)
+    project_asset = {"id": "asset-1", "project_id": "project-1", "name": "voice.wav"}
+    other_asset = {"id": "asset-2", "project_id": "project-2", "name": "song.wav"}
+
+    store.save_audio_asset(project_asset)
+    store.save_audio_asset(other_asset)
+
+    reopened = Store(database)
+    assert reopened.get_audio_asset("asset-1") == project_asset
+    assert reopened.list_audio_assets("project-1") == [project_asset]
+    assert reopened.list_audio_assets() == [other_asset, project_asset]

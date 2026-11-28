@@ -26,13 +26,19 @@ from .ui import PAGE
 from .workflows import run_cover_workflow
 
 ROOT = Path(os.environ.get("AI_VOICE_STUDIO_DATA_DIR", Path.cwd() / "work" / "runtime")).resolve()
-INBOX, OUT, MODELS, DATASETS = ROOT / "audio", ROOT / "outputs", ROOT / "models", ROOT / "datasets"
+INBOX, OUT, MODELS, DATASETS, ASSETS = (
+    ROOT / "audio",
+    ROOT / "outputs",
+    ROOT / "models",
+    ROOT / "datasets",
+    ROOT / "assets",
+)
 MAX_AUDIO_UPLOAD_BYTES = 512 * 1024 * 1024
 MAX_DATASET_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 MAX_DOCUMENT_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_MODEL_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
-for p in (INBOX, OUT, MODELS, DATASETS): p.mkdir(parents=True, exist_ok=True)
+for p in (INBOX, OUT, MODELS, DATASETS, ASSETS): p.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="AI Voice Studio", version="0.1.0")
 jobs = {}
 cancel_flags = {}
@@ -86,6 +92,72 @@ async def list_project_outputs(pid: str):
             seen.add(url)
             outputs.append({"job_id": job["id"], "job_type": job.get("type", ""), "label": label, "url": url})
     return outputs
+
+
+@app.get("/api/audio-assets")
+async def list_audio_assets(project_id: str = ""):
+    if project_id and not store.get_project(project_id):
+        raise HTTPException(404, "project not found")
+    assets = []
+    for asset in store.list_audio_assets(project_id):
+        stored_name = asset.get("stored_name", "")
+        if stored_name and Path(stored_name).name == stored_name and (ASSETS / stored_name).is_file():
+            assets.append(asset)
+    return assets
+
+
+@app.post("/api/audio-assets")
+async def import_audio_asset(file: UploadFile, project_id: str = Form(), rights_note: str = Form()):
+    if not store.get_project(project_id):
+        raise HTTPException(400, "project_id must reference an existing project")
+    rights_note = rights_note.strip()
+    if not rights_note or len(rights_note) > 200:
+        raise HTTPException(400, "rights_note must be 1-200 characters")
+    safe = Path(file.filename or "audio.wav").name
+    asset_id = uuid.uuid4().hex
+    stored_name = f"{asset_id}_{safe}"
+    target = ASSETS / stored_name
+    size = await save_upload_limited(file, target, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    try:
+        metadata = inspect_audio(target)
+    except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, f"invalid audio asset: {error}") from error
+    media_type = {
+        "WAV": "audio/wav",
+        "FLAC": "audio/flac",
+        "OGG": "audio/ogg",
+        "AIFF": "audio/aiff",
+    }.get(metadata["format"], "application/octet-stream")
+    asset = {
+        "id": asset_id,
+        "project_id": project_id,
+        "name": safe,
+        "stored_name": stored_name,
+        "size": size,
+        "sha256": sha256_file(target),
+        "rights_note": rights_note,
+        "metadata": metadata,
+        "media_type": media_type,
+        "status": "registered_audio_validated",
+        "url": f"/api/audio-assets/{asset_id}/download",
+    }
+    store.save_audio_asset(asset)
+    return asset
+
+
+@app.get("/api/audio-assets/{asset_id}/download")
+async def download_audio_asset(asset_id: str):
+    asset = store.get_audio_asset(asset_id)
+    if not asset:
+        raise HTTPException(404, "audio asset not found")
+    stored_name = asset.get("stored_name", "")
+    path = ASSETS / stored_name
+    if not stored_name or Path(stored_name).name != stored_name or not path.is_file():
+        raise HTTPException(404, "audio asset file is missing")
+    return FileResponse(path, media_type=asset.get("media_type", "application/octet-stream"), filename=asset["name"])
+
+
 @app.get("/api/jobs")
 async def list_jobs(project_id: str = ""): return store.list_jobs(project_id)
 @app.post("/api/midi/inspect")

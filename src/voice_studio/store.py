@@ -25,6 +25,7 @@ class Store:
             db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             db.execute("CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS datasets (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS audio_assets (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
     def connect(self):
         db=sqlite3.connect(self.path); db.row_factory=sqlite3.Row; return db
     def save_job(self, job):
@@ -90,3 +91,22 @@ class Store:
     def list_datasets(self):
         with self.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT data FROM datasets ORDER BY rowid DESC")]
+
+    def save_audio_asset(self, asset):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO audio_assets(id,data) VALUES (?,?)", (asset["id"], json.dumps(asset)))
+
+    def get_audio_asset(self, asset_id):
+        with self.connect() as db:
+            row = db.execute("SELECT data FROM audio_assets WHERE id=?", (asset_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def list_audio_assets(self, project_id=""):
+        query = "SELECT data FROM audio_assets"
+        parameters = ()
+        if project_id:
+            query += " WHERE json_extract(data, '$.project_id')=?"
+            parameters = (project_id,)
+        query += " ORDER BY rowid DESC"
+        with self.connect() as db:
+            return [json.loads(row[0]) for row in db.execute(query, parameters)]
