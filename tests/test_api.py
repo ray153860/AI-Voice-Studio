@@ -145,6 +145,10 @@ def test_jobs_can_be_filtered_by_project(tmp_path, monkeypatch):
 def test_project_outputs_collect_downloadable_job_files(tmp_path, monkeypatch):
     from voice_studio.store import Store
 
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    (outputs / "vocals.wav").write_bytes(b"vocals")
+    (outputs / "accompaniment.wav").write_bytes(b"accompaniment")
     store = Store(tmp_path / "studio.sqlite3")
     store.create_project("project-a", "Project A")
     store.save_job(
@@ -172,6 +176,7 @@ def test_project_outputs_collect_downloadable_job_files(tmp_path, monkeypatch):
             "log": [],
         }
     )
+    monkeypatch.setattr(app_module, "OUT", outputs)
     monkeypatch.setattr(app_module, "store", store)
 
     response = ApiClient(app_module.app).get("/api/projects/project-a/outputs")
@@ -191,6 +196,37 @@ def test_project_outputs_collect_downloadable_job_files(tmp_path, monkeypatch):
             "url": "/api/outputs/accompaniment.wav",
         },
     ]
+
+
+def test_project_outputs_omit_missing_or_unsafe_files(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    (outputs / "available.wav").write_bytes(b"audio")
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("project-a", "Project A")
+    store.save_job(
+        {
+            "id": "mixed-outputs",
+            "type": "audio_mix",
+            "status": "completed",
+            "project_id": "project-a",
+            "output": "/api/outputs/available.wav",
+            "artifacts": {
+                "missing": "/api/outputs/missing.wav",
+                "unsafe": "/api/outputs/../private.wav",
+            },
+            "log": [],
+        }
+    )
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+
+    response = ApiClient(app_module.app).get("/api/projects/project-a/outputs")
+
+    assert response.status_code == 200
+    assert [item["url"] for item in response.json()] == ["/api/outputs/available.wav"]
 
 
 def test_project_outputs_reject_unknown_project(tmp_path, monkeypatch):

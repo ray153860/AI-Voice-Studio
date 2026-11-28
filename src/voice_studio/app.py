@@ -79,6 +79,9 @@ async def list_project_outputs(pid: str):
         for label, url in candidates:
             if not isinstance(url, str) or not url.startswith("/api/outputs/") or url in seen:
                 continue
+            name = url.removeprefix("/api/outputs/")
+            if not name or Path(name).name != name or not (OUT / name).is_file():
+                continue
             seen.add(url)
             outputs.append({"job_id": job["id"], "job_type": job.get("type", ""), "label": label, "url": url})
     return outputs
