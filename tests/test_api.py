@@ -75,6 +75,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert "loadAudioAssetOptions()" in response.text
     assert 'id="rvcAsset"' in response.text
     assert "loadRvcAssetOptions()" in response.text
+    assert 'id="separationAsset"' in response.text
+    assert "loadSeparationAssetOptions()" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -854,6 +856,65 @@ def test_separation_workflow_with_simulated_adapter(tmp_path, monkeypatch):
     assert retried_job["project_id"] == "separation-project"
     assert retried_job["log"][0] == f"retried from {job['id']}"
     assert retried_job["result"]["engine"] == "simulated-demucs"
+
+
+def test_separation_can_reuse_audio_asset_from_same_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    assets = tmp_path / "assets"
+    outputs = tmp_path / "outputs"
+    assets.mkdir()
+    outputs.mkdir()
+    source = assets / "asset_song.wav"
+    sf.write(source, np.zeros(4410, dtype="float32"), 44100)
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("separation-project", "Separation Project")
+    store.save_audio_asset(
+        {
+            "id": "asset-1",
+            "project_id": "separation-project",
+            "name": "song.wav",
+            "stored_name": source.name,
+        }
+    )
+    monkeypatch.setenv("DEMUCS_EXECUTABLE", "demucs-engine")
+    monkeypatch.setattr(app_module, "ASSETS", assets, raising=False)
+    monkeypatch.setattr(app_module, "OUT", outputs)
+    monkeypatch.setattr(app_module, "store", store)
+    app_module.jobs.clear()
+
+    class FakeAdapter:
+        def __init__(self, executable, output_dir):
+            self.output_dir = output_dir
+
+        async def run(self, request):
+            assert Path(request.input_audio) == source
+            vocals = self.output_dir / "asset-vocals.wav"
+            accompaniment = self.output_dir / "asset-accompaniment.wav"
+            sf.write(vocals, np.zeros(4410, dtype="float32"), 44100)
+            sf.write(accompaniment, np.zeros(4410, dtype="float32"), 44100)
+            return EngineResult(
+                str(vocals),
+                44100,
+                "simulated-demucs",
+                {"duration": 0.1},
+                {"vocals": str(vocals), "accompaniment": str(accompaniment)},
+            )
+
+    monkeypatch.setattr(app_module, "DemucsAdapter", FakeAdapter)
+    client = ApiClient(app_module.app)
+    response = client.post(
+        "/api/workflow/separate",
+        data={"project_id": "separation-project", "asset_id": "asset-1"},
+    )
+
+    assert response.status_code == 200
+    job = client.get(f"/api/jobs/{response.json()['id']}").json()
+    assert job["status"] == "completed"
+    assert job["source_asset_id"] == "asset-1"
+    retried = client.post(f"/api/jobs/{job['id']}/retry")
+    assert retried.status_code == 200
+    assert client.get(f"/api/jobs/{retried.json()['id']}").json()["source_asset_id"] == "asset-1"
 
 
 def test_separation_rejects_input_audio_over_limit(tmp_path, monkeypatch):

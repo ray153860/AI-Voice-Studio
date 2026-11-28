@@ -645,24 +645,38 @@ async def run_cover_job(
 @app.post("/api/workflow/separate")
 async def separation_workflow(
     bg: BackgroundTasks,
-    input_audio: UploadFile,
+    input_audio: UploadFile | None = None,
     model: str = Form(default="htdemucs"),
     device: str = Form(default=""),
     project_id: str = Form(default=""),
+    asset_id: str = Form(default=""),
 ):
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project_id must reference an existing project")
     executable = os.environ.get("DEMUCS_EXECUTABLE", "").strip()
     if not executable:
         raise HTTPException(503, "Demucs engine executable is not configured")
+    if bool(input_audio) == bool(asset_id):
+        raise HTTPException(400, "provide exactly one uploaded file or audio asset")
     jid = uuid.uuid4().hex
-    safe = Path(input_audio.filename or "song.wav").name
-    source = INBOX / f"{jid}_{safe}"
-    await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
+    if asset_id:
+        asset = store.get_audio_asset(asset_id)
+        if not asset or asset.get("project_id") != project_id:
+            raise HTTPException(400, "audio asset must belong to the selected project")
+        stored_name = asset.get("stored_name", "")
+        source = ASSETS / stored_name
+        if not stored_name or Path(stored_name).name != stored_name or not source.is_file():
+            raise HTTPException(404, "audio asset file is missing")
+        safe = asset["name"]
+    else:
+        safe = Path(input_audio.filename or "song.wav").name
+        source = INBOX / f"{jid}_{safe}"
+        await save_upload_limited(input_audio, source, MAX_AUDIO_UPLOAD_BYTES, "audio")
     try:
         metadata = inspect_audio(source)
     except (RuntimeError, ValueError, OSError, sf.LibsndfileError) as error:
-        source.unlink(missing_ok=True)
+        if not asset_id:
+            source.unlink(missing_ok=True)
         raise HTTPException(400, str(error)) from error
     jobs[jid] = {
         "id": jid,
@@ -670,6 +684,7 @@ async def separation_workflow(
         "status": "queued",
         "input": safe,
         "project_id": project_id,
+        "source_asset_id": asset_id,
         "metadata": metadata,
         "retry": {
             "input_audio": str(source),
@@ -1278,6 +1293,7 @@ async def retry_job(jid, bg: BackgroundTasks):
             "status": "queued",
             "input": job["input"],
             "project_id": job.get("project_id", ""),
+            "source_asset_id": job.get("source_asset_id", ""),
             "metadata": job["metadata"],
             "retry": retry,
             "log": [f"retried from {jid}"],
