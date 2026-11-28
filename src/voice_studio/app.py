@@ -65,6 +65,23 @@ async def create_project(payload: dict):
     pid=uuid.uuid4().hex
     store.create_project(pid,name)
     return {"id":pid,"name":name}
+@app.get("/api/projects/{pid}/outputs")
+async def list_project_outputs(pid: str):
+    if not store.get_project(pid):
+        raise HTTPException(404, "project not found")
+    outputs = []
+    for job in store.list_jobs(pid):
+        seen = set()
+        candidates = [("output", job.get("output"))]
+        artifacts = job.get("artifacts")
+        if isinstance(artifacts, dict):
+            candidates.extend(artifacts.items())
+        for label, url in candidates:
+            if not isinstance(url, str) or not url.startswith("/api/outputs/") or url in seen:
+                continue
+            seen.add(url)
+            outputs.append({"job_id": job["id"], "job_type": job.get("type", ""), "label": label, "url": url})
+    return outputs
 @app.get("/api/jobs")
 async def list_jobs(project_id: str = ""): return store.list_jobs(project_id)
 @app.post("/api/midi/inspect")

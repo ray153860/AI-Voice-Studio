@@ -63,6 +63,8 @@ def test_home_exposes_diffsinger_submission_controls():
     assert '<select id="coverModel"' in response.text
     assert '<select id="coverIndex"' in response.text
     assert '<select id="trainingDataset"' in response.text
+    assert 'id="outputProject"' in response.text
+    assert "查看项目输出" in response.text
 
 
 def test_capabilities_show_training_dependencies_are_missing(monkeypatch):
@@ -138,6 +140,68 @@ def test_jobs_can_be_filtered_by_project(tmp_path, monkeypatch):
     jobs = ApiClient(app_module.app).get("/api/jobs", params={"project_id": "project-a"}).json()
 
     assert [job["id"] for job in jobs] == ["job-a"]
+
+
+def test_project_outputs_collect_downloadable_job_files(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    store = Store(tmp_path / "studio.sqlite3")
+    store.create_project("project-a", "Project A")
+    store.save_job(
+        {
+            "id": "separation-job",
+            "type": "vocal_separation",
+            "status": "completed",
+            "project_id": "project-a",
+            "output": "/api/outputs/vocals.wav",
+            "artifacts": {
+                "vocals": "/api/outputs/vocals.wav",
+                "accompaniment": "/api/outputs/accompaniment.wav",
+                "external": "https://example.test/not-local.wav",
+            },
+            "log": [],
+        }
+    )
+    store.save_job(
+        {
+            "id": "other-project-job",
+            "type": "audio_mix",
+            "status": "completed",
+            "project_id": "project-b",
+            "output": "/api/outputs/other.wav",
+            "log": [],
+        }
+    )
+    monkeypatch.setattr(app_module, "store", store)
+
+    response = ApiClient(app_module.app).get("/api/projects/project-a/outputs")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "job_id": "separation-job",
+            "job_type": "vocal_separation",
+            "label": "output",
+            "url": "/api/outputs/vocals.wav",
+        },
+        {
+            "job_id": "separation-job",
+            "job_type": "vocal_separation",
+            "label": "accompaniment",
+            "url": "/api/outputs/accompaniment.wav",
+        },
+    ]
+
+
+def test_project_outputs_reject_unknown_project(tmp_path, monkeypatch):
+    from voice_studio.store import Store
+
+    monkeypatch.setattr(app_module, "store", Store(tmp_path / "studio.sqlite3"))
+
+    response = ApiClient(app_module.app).get("/api/projects/missing-project/outputs")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "project not found"
 
 
 def test_invalid_audio_rejected(tmp_path, monkeypatch):
